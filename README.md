@@ -1,3 +1,5 @@
+[![builds.sr.ht status](https://builds.sr.ht/~jackwines/discourse-tui.svg)](https://builds.sr.ht/~jackwines/discourse-tui?)
+
 This is a terminal viewer for [discourse](https://www.discourse.org/) inspired by a [similar tool for reddit](https://github.com/michael-lazar/rtv).
 
 ![demo](demo.svg)

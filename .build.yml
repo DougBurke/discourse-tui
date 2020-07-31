@@ -1,0 +1,9 @@
+image: alpine/edge
+packages:
+  - ghc
+  - cabal
+tasks:
+  - build: |
+    cd discourse-tui
+    cabal update
+    cabal build
