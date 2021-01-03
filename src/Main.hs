@@ -91,12 +91,12 @@ getTuiState baseUrl = do
       }
 
 -- the help bar at the bottom
-helpBar :: Maybe TimeOrder -> Widget String
+helpBar :: Maybe TimeOrder -> Widget ResourceName
 helpBar mOrder = withAttr "bar" widget
   where
     widget = case mOrder of
-      Just order -> str msgFull <+> dirMsg order
-      Nothing -> str msgBase
+      Just order -> txt msgFull <+> dirMsg order
+      Nothing -> txt msgBase
 
     msgBase = "arrow keys -> move | left right -> read replies/full post | q to quit"
     msgFull = "arrow keys -> move | left right -> read replies/full post | s swap order | q to quit"
@@ -104,10 +104,10 @@ helpBar mOrder = withAttr "bar" widget
     dir Decreasing = "↓" -- unicode 2193  "-"
 
     dirMsg order = padLeft Max
-             $ str (dir order)
+             $ txt (dir order)
 
 -- get the posts for the current topic
-getPosts :: TuiState -> IO (WL.List String Post)
+getPosts :: TuiState -> IO (WL.List ResourceName Post)
 getPosts ts = do
     let (Just selectedTopicID) = view (_2 . topicId) <$> WL.listSelectedElement (ts ^. topics)
     postsRequest <- parseRequest $ mconcat [ts ^. baseURL, "/t/", show selectedTopicID, ".json"]
@@ -120,13 +120,12 @@ postToPandoc post = do
     newContents <- toMarkdown $ post ^. contents
     pure $ post & contents .~ newContents
 
-toMarkdown :: String -> IO String
+toMarkdown :: T.Text -> IO T.Text
 toMarkdown s = do
     result <- runIO $ do
-        doc <- readHtml def (T.pack s)
+        doc <- readHtml def s
         writeCommonMark def doc
-    rst <- handleError result
-    pure $ T.unpack rst
+    handleError result
 
 
 -- This reverses the list *BUT* keeps the selected element,
@@ -190,17 +189,19 @@ drawTui (TuiState tNow scrollable Nothing _ _ _) =
                       . padRight (Pad 1)
                       . hLimit 4
                       . padRight Max
-                      . str
+                      . txt
+                      . T.pack
                       . show
                       $ likeCount
 
                 title' :: Widget ResourceName
-                title' = withAttr "title" . str $ title
+                title' = withAttr "title" . txt $ title
 
                 postsCount' :: Widget ResourceName
                 postsCount' = padLeft (Pad 5)
-                            . str
-                            . ("posts: " ++)
+                            . txt
+                            . ("posts: " <>)
+                            . T.pack
                             . show
                             $ postsCount
 
@@ -212,11 +213,11 @@ drawTui (TuiState tNow scrollable Nothing _ _ _) =
                        $ posters
 
                 category :: Widget ResourceName
-                category = padLeft (Pad 5) . str $ category'
+                category = padLeft (Pad 5) . txt $ category'
 
                 -- this could perhaps be re-worked now using Vector
-                showList :: V.Vector String -> [Widget ResourceName]
-                showList v = map str . V.toList $ (V.map (++ " ") . V.init $ v) V.++ V.singleton (V.last v)
+                showList :: V.Vector ResourceName -> [Widget ResourceName]
+                showList v = map txt . V.toList $ (V.map (<> " ") . V.init $ v) V.++ V.singleton (V.last v)
 
 -- this pattern matches the post list
 drawTui (TuiState tNow _ (Just posts) _ False order)
@@ -228,16 +229,16 @@ drawTui (TuiState tNow _ (Just posts) _ False order)
         drawPost selected (Post id username' createdAt' contents score')
             = border'
             $ withAttr (if selected then "selected" else "")
-              (hLimit 4 . padRight Max . str . show $ score') 
+              (hLimit 4 . padRight Max . txt . T.pack . show $ score') 
             <+> ((userName'' <+> created)
                  <=> contents')
             where
-                userName'' = withAttr "OP" . str $ username'
+                userName'' = withAttr "OP" . txt $ username'
                 created = withAttr "title"
                           . padLeft Max
                           . padRight (Pad 1)
                           $ txt (showTimeDelta tNow createdAt')
-                contents' = strWrap contents
+                contents' = txtWrap contents
                 border' = border
                         . vLimit 8
                         . padBottom Max
@@ -256,10 +257,10 @@ drawTui (TuiState tNow _ (Just posts) _ True order) =
         Nothing -> posts'
 
     elem = case WL.listSelectedElement posts'' of
-      (Just (_, post)) -> withAttr "OP" (str (post ^. opUserName)
+      (Just (_, post)) -> withAttr "OP" (txt (post ^. opUserName)
                                          <+> padLeft Max (txt (showTimeDelta tNow (post ^. opCreatedAt)))
                                         )
-                          <=> padBottom Max (str $ post ^. contents)
+                          <=> padBottom Max (txt $ post ^. contents)
                           <=> helpBar Nothing
       Nothing -> txt "something went wrong"
 
@@ -269,7 +270,7 @@ showTimeDelta ::
   -- ^ The current time
   -> UTCTime
   -- ^ A time in the past
-  -> T.Text
+  -> ResourceName
 showTimeDelta now old =
   let dt = diffUTCTime old now
   in LT.toStrict (F.format (FT.diff True) dt)
@@ -279,7 +280,7 @@ showTimeDelta now old =
 mapFst :: (a -> a) -> (a -> a) ->  [a] -> [a]
 mapFst fn fn' (x:xs) = fn x : map fn' xs
 
-handleTuiEvent :: TuiState -> BrickEvent String e -> EventM String (Next TuiState)
+handleTuiEvent :: TuiState -> BrickEvent ResourceName e -> EventM ResourceName (Next TuiState)
 handleTuiEvent tui (VtyEvent (EvKey (KChar 'q') _)) = halt tui
 
 -- We only change the setting when the posts are listed, not

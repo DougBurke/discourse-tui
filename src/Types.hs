@@ -30,6 +30,7 @@ module Types (TuiState(..)
              , topicHeight
              ) where
 
+import qualified Data.Text as T
 import qualified Data.Vector as V
 
 import Brick.Widgets.List (List)
@@ -88,7 +89,7 @@ instance FromJSON CategoryResponse where
         -- fake the sub-categories
         let extra = V.filter (not . null . _subCategoryIds) categories'
             dup c = V.map (fake c) (_subCategoryIds c)
-            fake cat cid = Category cid (_categoryName cat ++ " [SUB-CATEGORY]") V.empty
+            fake cat cid = Category cid (_categoryName cat <> " [SUB-CATEGORY]") V.empty
             extra' = V.concatMap dup extra
 
         return $ CategoryResponse $ categories' V.++ extra'
@@ -137,7 +138,7 @@ data ProtoTopic = ProtoTopic
     {
     _topicId :: Int,
     _categoryID :: Int,
-    _title :: String,
+    _title :: T.Text,
     _lastUpdatedProyo :: UTCTime,
     _likeCount :: Int,
     _postsCount :: Int,
@@ -148,34 +149,34 @@ data ProtoTopic = ProtoTopic
 data Topic = Topic
     {
     _topicId :: Int,
-    _category :: String,
-    _title :: String,
+    _category :: T.Text,
+    _title :: T.Text,
     _lastUpdated :: UTCTime,
     _likeCount :: Int,
     _postsCount :: Int,
-    _posters :: V.Vector String,
+    _posters :: V.Vector T.Text,
     _pinned :: Bool
     } deriving (Show)
 
 data User = User
     {
     _userId :: Int,
-    _userName :: String,
-    _realName :: String
+    _userName :: T.Text,
+    _realName :: T.Text
     } deriving (Show)
 
 
 data Category = Category
     {
     _categoryId :: Int,
-    _categoryName :: String,
+    _categoryName :: T.Text,
     _subCategoryIds :: V.Vector Int
     } deriving (Show)
 
 data Poster = Poster
     {
     _posterId :: Int,
-    _description :: String
+    _description :: T.Text
     } deriving (Show)
 
 data PostResponse = PostResponse
@@ -186,9 +187,9 @@ data PostResponse = PostResponse
 data Post = Post
     {
     _postId :: Int,
-    _opUserName :: String,
+    _opUserName :: T.Text,
     _opCreatedAt :: UTCTime,
-    _contents :: String,
+    _contents :: T.Text,
     _likes :: Int
     } deriving (Show)
 
@@ -198,14 +199,14 @@ data TimeOrder = Decreasing | Increasing
 data TuiState = TuiState
     {
       _currentTime :: UTCTime,
-      _topics :: List String Topic,
-      _posts :: Maybe (List String Post), -- Nothing if not in post view
+      _topics :: List T.Text Topic,
+      _posts :: Maybe (List T.Text Post), -- Nothing if not in post view
       _baseURL :: String,
       _singlePostView :: Bool, -- if we're looking at the full contents of one post
       _timeOrder :: TimeOrder
     } deriving (Show)
 
-type ResourceName = String
+type ResourceName = T.Text
 
 makeLenses ''CategoryResponse
 makeLenses ''Post
