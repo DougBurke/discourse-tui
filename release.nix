@@ -1,28 +1,52 @@
 let
-  nixpkgs = fetchGit {
-    url = git://github.com/NixOS/nixpkgs-channels;
-    ref = "nixos-19.03";
+  #nixpkgs = fetchGit {
+  #  url = git://github.com/NixOS/nixpkgs-channels;
+  #  # ref = "nixos-19.03";
+  #  ref = "nixos-20.03";
+  #};
+
+  nixpkgs = import <nixpkgs> {};
+
+  compiler = "ghc8102";
+
+  inherit (nixpkgs) pkgs;
+
+  # since we are in a sub-directory
+  gitignore = pkgs.nix-gitignore.gitignoreSourcePure [ ./.gitignore ];
+
+  myHaskellPackages = pkgs.haskell.packages.${compiler}.override {
+    overrides = hself: hsuper: {
+      "discourse-tui" =
+        hself.callCabal2nix "discourse-tui" (gitignore ./.) {};
+
+      #validity =
+      #  hself.callHackage "validity" "0.8.0.0" {};
+
+      #cursor =
+      #  hself.callHackage "cursor" "0.0.0.1" {};
+
+    };
   };
 
-  config = {
-	packageOverrides = pkgs: rec {
-	  haskellPackages = pkgs.haskellPackages.override {
-        overrides = haskellPackagesNew: haskellPackagesOld: rec {
-           project
-	   = haskellPackagesNew.callCabal2nix "discourse-tui" ../discourse-tui {};
-	  
-	   validity
-	   = haskellPackages.callHackage "validity" "0.8.0.0" {};
-
-	   cursor
-	   = haskellPackages.callHackage "cursor" "0.0.0.1" {};
-	    };
-	  };
-	};
+  shell = myHaskellPackages.shellFor {
+    packages = p: [
+      p."discourse-tui"
+    ];
+    buildInputs = [
+      pkgs.haskellPackages.cabal-install
+      pkgs.haskellPackages.haskell-language-server
+      pkgs.haskellPackages.hlint
+      pkgs.niv
+    ];
+    # withHoogle = true;
   };
 
-  pkgs = import nixpkgs {inherit config;};
+  exe = pkgs.haskell.lib.justStaticExecutables (myHaskellPackages."discourse-tui");
+
 in
   {
-   project = pkgs.haskellPackages.project;
+   inherit shell;
+   inherit exe;
+   inherit myHaskellPackages;
+   "discourse-tui" = myHaskellPackages."discourse-tui";
   }
