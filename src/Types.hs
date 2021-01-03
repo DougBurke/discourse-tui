@@ -1,23 +1,59 @@
-module Types where
+{-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TemplateHaskell #-}
 
-import Data.Aeson
-import Cursor.Simple.List.NonEmpty (NonEmptyCursor)
-import qualified Data.IntMap.Strict as M
-import Brick.Widgets.List
-import GHC.Generics
+module Types (TuiState(..)
+             , currentTime
+             , topics
+             , posts
+             , baseURL
+             , timeOrder
+             , Category
+             , categoryId
+             , categoryName
+             , categories
+             , ProtoTopic(..)
+             , topicId
+             , Post(..)
+             , posterId
+             , opUserName
+             , opCreatedAt
+             , contents
+             , PostResponse(..)
+             , Topic(..)
+             , TopicResponse(..)
+             , User
+             , userId
+             , userName
+             , TimeOrder(..)
+             , ResourceName
+             , topicHeight
+             ) where
+
+import qualified Data.Vector as V
+
+import Brick.Widgets.List (List)
+
 import Control.Lens
 import Control.Lens.TH
+
+import Data.Aeson (FromJSON, Value(Object)
+                  , (.:), (.:?), (.!=)
+                  , parseJSON, withObject)
+import Data.Time (UTCTime)
+
 
 instance FromJSON ProtoTopic where
     parseJSON = withObject "ProtoTopic" $ \v -> do 
         topicId' <- v .: "id"
         title'  <- v .: "title"
+        lastUpdated' <- v .: "last_posted_at"  -- canthis be empty or missing?
         likeCount' <- v.: "like_count"
         postsCount' <- v.: "posts_count"
         posters' <- v.: "posters"
         pinned' <- v.: "pinned"
         categoryId' <- v.: "category_id"
-        return $ ProtoTopic topicId' categoryId' title' likeCount' postsCount' posters' pinned'
+        return $ ProtoTopic topicId' categoryId' title' lastUpdated' likeCount' postsCount' posters' pinned'
 
 instance FromJSON User where
     parseJSON (Object v) = User
@@ -41,12 +77,21 @@ instance FromJSON Category where
     parseJSON (Object v) = Category
         <$> v .: "id"
         <*> v .: "name"
+        <*> v .:? "subcategory_ids" .!= V.empty
 
+-- We hack categories to support the "sub-categories"
 instance FromJSON CategoryResponse where
     parseJSON = withObject "CategoryResponse" $ \v -> do
         categoryList <- v .: "category_list"
         categories' <- categoryList .: "categories"
-        return $ CategoryResponse categories'
+
+        -- fake the sub-categories
+        let extra = V.filter (not . null . _subCategoryIds) categories'
+            dup c = V.map (fake c) (_subCategoryIds c)
+            fake cat cid = Category cid (_categoryName cat ++ " [SUB-CATEGORY]") V.empty
+            extra' = V.concatMap dup extra
+
+        return $ CategoryResponse $ categories' V.++ extra'
 
 instance FromJSON PostResponse where
     parseJSON = withObject "PastResponse" $ \v -> do
@@ -58,9 +103,10 @@ instance FromJSON Post where
     parseJSON = withObject "Post" $ \v -> do
         id' <- v .: "id"
         username' <- v .: "username"
+        createdAt' <- v .: "created_at"
         cooked' <- v .: "cooked"
         actions <- v .: "actions_summary"
-        return $ Post id' username' cooked' (if null actions then 0 else _count . head $ actions)
+        return $ Post id' username' createdAt' cooked' (if null actions then 0 else _count . head $ actions)
 
 instance FromJSON Action where
     parseJSON (Object v) = Action
@@ -69,7 +115,7 @@ instance FromJSON Action where
 
 newtype CategoryResponse = CategoryResponse
     {
-    _categories :: [Category]
+    _categories :: V.Vector Category
     } deriving (Show)
 
 data Action = Action
@@ -80,8 +126,8 @@ data Action = Action
 
 data TopicResponse = TopicResponse
     {
-    _users :: [User],
-    _topicList :: [ProtoTopic]
+    _users :: V.Vector User,
+    _topicList :: V.Vector ProtoTopic
     } deriving (Show)
 
 topicHeight :: Int
@@ -92,9 +138,10 @@ data ProtoTopic = ProtoTopic
     _topicId :: Int,
     _categoryID :: Int,
     _title :: String,
+    _lastUpdatedProyo :: UTCTime,
     _likeCount :: Int,
     _postsCount :: Int,
-    _posters :: [Poster],
+    _posters :: V.Vector Poster,
     _pinned :: Bool
     } deriving (Show)
 
@@ -103,9 +150,10 @@ data Topic = Topic
     _topicId :: Int,
     _category :: String,
     _title :: String,
+    _lastUpdated :: UTCTime,
     _likeCount :: Int,
     _postsCount :: Int,
-    _posters :: [String],
+    _posters :: V.Vector String,
     _pinned :: Bool
     } deriving (Show)
 
@@ -120,7 +168,8 @@ data User = User
 data Category = Category
     {
     _categoryId :: Int,
-    _categoryName :: String
+    _categoryName :: String,
+    _subCategoryIds :: V.Vector Int
     } deriving (Show)
 
 data Poster = Poster
@@ -131,23 +180,29 @@ data Poster = Poster
 
 data PostResponse = PostResponse
     {
-    _postList :: [Post]                         
+    _postList :: V.Vector Post
     } deriving (Show)
 
 data Post = Post
     {
     _postId :: Int,
     _opUserName :: String,
+    _opCreatedAt :: UTCTime,
     _contents :: String,
     _likes :: Int
     } deriving (Show)
 
+data TimeOrder = Decreasing | Increasing
+  deriving (Eq, Show)
+
 data TuiState = TuiState
     {
-    _topics :: List String Topic,
-    _posts :: Maybe (List String Post), -- Nothing if not in post view
-    _baseURL :: String,
-    _singlePostView :: Bool -- if we're looking at the full contents of one post
+      _currentTime :: UTCTime,
+      _topics :: List String Topic,
+      _posts :: Maybe (List String Post), -- Nothing if not in post view
+      _baseURL :: String,
+      _singlePostView :: Bool, -- if we're looking at the full contents of one post
+      _timeOrder :: TimeOrder
     } deriving (Show)
 
 type ResourceName = String

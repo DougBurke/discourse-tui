@@ -54,15 +54,7 @@ executable discourse-tui
   main-is:             Main.hs
 
   -- Modules included in this executable, other than Main.
-  other-modules:       Types, VHList
-
-  -- LANGUAGE extensions used by modules in this package.
-  default-extensions: ScopedTypeVariables,
-                      OverloadedStrings,
-                      DuplicateRecordFields,
-                      DeriveGeneric,
-                      TemplateHaskell
-  -- other-extensions:
+  other-modules:       Types
 
   -- Other library packages from which modules are imported.
   build-depends:       base,
@@ -75,7 +67,9 @@ executable discourse-tui
                        vector,
                        pandoc,
                        text,
-                       lens
+                       lens,
+                       formatting == 7.1.*,
+                       time == 1.9.*
 
   -- Directories containing source files.
   hs-source-dirs:      src
