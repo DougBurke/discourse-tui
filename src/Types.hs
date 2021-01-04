@@ -39,8 +39,7 @@ import Brick.Widgets.List (List)
 
 import Control.Lens
 
-import Data.Aeson (FromJSON, Value(Object)
-                  , (.:), (.:?), (.!=)
+import Data.Aeson (FromJSON, (.:), (.:?), (.!=)
                   , parseJSON, withObject)
 import Data.Time (UTCTime)
 
@@ -62,10 +61,11 @@ instance FromJSON ProtoTopic where
 -- where name is null ("name": ,)
 --
 instance FromJSON User where
-    parseJSON (Object v) = User
-            <$> v .: "id"
-            <*> v .: "username"
-            <*> v .:? "name" .!= ""
+    parseJSON = withObject "User" $ \v ->
+      User
+      <$> v .: "id"
+      <*> v .: "username"
+      <*> v .:? "name" .!= ""
 
 instance FromJSON TopicResponse where
     parseJSON = withObject "TopicResponse" $ \v -> do
@@ -75,15 +75,17 @@ instance FromJSON TopicResponse where
            return $ TopicResponse users' topics'
 
 instance FromJSON Poster where
-    parseJSON (Object v) = Poster
-           <$> v .: "user_id"
-           <*> v .: "description"
+    parseJSON = withObject "Poster" $ \v ->
+      Poster
+      <$> v .: "user_id"
+      <*> v .: "description"
 
 instance FromJSON Category where
-    parseJSON (Object v) = Category
-        <$> v .: "id"
-        <*> v .: "name"
-        <*> v .:? "subcategory_ids" .!= V.empty
+    parseJSON = withObject "Category" $ \v ->
+      Category
+      <$> v .: "id"
+      <*> v .: "name"
+      <*> v .:? "subcategory_ids" .!= V.empty
 
 -- We hack categories to support the "sub-categories"
 instance FromJSON CategoryResponse where
@@ -128,9 +130,10 @@ instance FromJSON Post where
         return $ Post id' postNumber' username' createdAt' cooked' (if null actions then 0 else _count . head $ actions)
 
 instance FromJSON Action where
-    parseJSON (Object v) = Action
-        <$> v .: "id"
-        <*> v .: "count"
+    parseJSON = withObject "Action" $ \v ->
+      Action
+      <$> v .: "id"
+      <*> v .: "count"
 
 newtype CategoryResponse = CategoryResponse
     {
