@@ -16,9 +16,11 @@ module Types (TuiState(..)
              , topicId
              , Post(..)
              , posterId
+             , postNumber
              , opUserName
              , opCreatedAt
              , contents
+             , likes
              , PostResponse(..)
              , Topic(..)
              , TopicResponse(..)
@@ -36,7 +38,6 @@ import qualified Data.Vector as V
 import Brick.Widgets.List (List)
 
 import Control.Lens
-import Control.Lens.TH
 
 import Data.Aeson (FromJSON, Value(Object)
                   , (.:), (.:?), (.!=)
@@ -56,11 +57,15 @@ instance FromJSON ProtoTopic where
         categoryId' <- v.: "category_id"
         return $ ProtoTopic topicId' categoryId' title' lastUpdated' likeCount' postsCount' posters' pinned'
 
+-- TODO: should we replace name by username when name == ""?
+-- Also, on the  nix discourse there's at least one record
+-- where name is null ("name": ,)
+--
 instance FromJSON User where
     parseJSON (Object v) = User
             <$> v .: "id"
             <*> v .: "username"
-            <*> v .: "name"
+            <*> v .:? "name" .!= ""
 
 instance FromJSON TopicResponse where
     parseJSON = withObject "TopicResponse" $ \v -> do
@@ -97,17 +102,30 @@ instance FromJSON CategoryResponse where
 instance FromJSON PostResponse where
     parseJSON = withObject "PastResponse" $ \v -> do
         postStream <- v .: "post_stream"
+        chunkSize <- v .: "chunk_size"
+        highestPost <- v .: "highest_post_number"
         posts' <- postStream .: "posts"
-        return $ PostResponse posts'
+        return $ PostResponse chunkSize highestPost posts'
 
 instance FromJSON Post where
     parseJSON = withObject "Post" $ \v -> do
         id' <- v .: "id"
-        username' <- v .: "username"
+        postNumber' <- v .: "post_number"
+
+        -- Pick the display_name field if not missing/empty, otherwise the username.
+        -- Not the nicest bit of code.
+        --
+        -- Some people have the same username as display_username, so just drop
+        -- the duplication.
+        --
+        n1 <- v .: "display_username"
+        n2 <- v .: "username"
+        let username' = if n1 == "" || n2 == n1 then n2 else n1 <> " (" <> n2 <> ")"
+
         createdAt' <- v .: "created_at"
         cooked' <- v .: "cooked"
         actions <- v .: "actions_summary"
-        return $ Post id' username' createdAt' cooked' (if null actions then 0 else _count . head $ actions)
+        return $ Post id' postNumber' username' createdAt' cooked' (if null actions then 0 else _count . head $ actions)
 
 instance FromJSON Action where
     parseJSON (Object v) = Action
@@ -180,13 +198,16 @@ data Poster = Poster
     } deriving (Show)
 
 data PostResponse = PostResponse
-    {
-    _postList :: V.Vector Post
-    } deriving (Show)
+  {
+    _postChunkSize :: Int
+  , _postHighest :: Int
+  , _postList :: V.Vector Post
+  } deriving (Show)
 
 data Post = Post
     {
     _postId :: Int,
+    _postNumber ::Int,
     _opUserName :: T.Text,
     _opCreatedAt :: UTCTime,
     _contents :: T.Text,

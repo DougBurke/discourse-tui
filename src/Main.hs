@@ -20,9 +20,8 @@ import Brick.Widgets.Border
 
 import Control.Lens ((&), (?~), (.~), (^.), _2
                     , view)
-import Control.Monad (forM_, void)
+import Control.Monad (void)
 
-import Data.Maybe (fromMaybe)
 import Data.Time (UTCTime, diffUTCTime, getCurrentTime)
 
 import Graphics.Vty.Input.Events (Event(..), Key(..))
@@ -44,10 +43,10 @@ import Types
 -- the categories endpoint which is less-than-ideal.
 --
 parseTopic :: M.IntMap User -> M.IntMap Category -> ProtoTopic -> Topic
-parseTopic userMap catagoryMap (ProtoTopic topicId catId title lastUpdated likeC postsC posters pinned)
+parseTopic userMap catagoryMap (ProtoTopic topicId' catId title lastUpdated likeC postsC posters pinned)
     = Topic {
         _title = title,
-        _topicId = topicId,
+        _topicId = topicId',
         _category = (catagoryMap M.! catId) ^. categoryName,
         _lastUpdated = lastUpdated,
         _likeCount = likeC,
@@ -56,6 +55,7 @@ parseTopic userMap catagoryMap (ProtoTopic topicId catId title lastUpdated likeC
         _pinned = pinned
             }
 
+helpMessage :: String
 helpMessage = "Usage: discourse-tui url \n Ex: discourse-tui https://discourse.haskell.org"
 
 parseArgs :: IO String
@@ -107,13 +107,20 @@ helpBar mOrder = withAttr "bar" widget
              $ txt (dir order)
 
 -- get the posts for the current topic
+--
+-- TODO: pagination, but for now just use ?print=true which is meant to get
+--       up to 1000 posts, which should be good for me (as I can't see an obvious
+--       pagination feature). Hmm, this seems to trigger user-access restrictions!
+--
 getPosts :: TuiState -> IO (WL.List ResourceName Post)
 getPosts ts = do
-    let (Just selectedTopicID) = view (_2 . topicId) <$> WL.listSelectedElement (ts ^. topics)
-    postsRequest <- parseRequest $ mconcat [ts ^. baseURL, "/t/", show selectedTopicID, ".json"]
-    (PostResponse posts') <- getResponseBody <$> httpJSON postsRequest
-    posts <- mapM postToPandoc posts'
-    pure $ WL.list "posts" posts 10
+    let Just selectedTopicID = view (_2 . topicId) <$> WL.listSelectedElement (ts ^. topics)
+        postURL = mconcat [ts ^. baseURL, "/t/", show selectedTopicID, ".json" {- , "?print=true" -}]
+
+    postsRequest <- parseRequest postURL
+    (PostResponse _ maxCount posts') <- getResponseBody <$> httpJSON postsRequest
+    allPosts <- mapM postToPandoc posts'
+    pure $ WL.list "posts" allPosts 10
 
 postToPandoc :: Post -> IO Post
 postToPandoc post = do
@@ -177,22 +184,22 @@ drawTui (TuiState tNow scrollable Nothing _ _ _) =
                         = border
                         . (if pinned then withAttr "pinned" else id)
                         . padRight Max
-                        $ (likes <+> title' <+> lastMod) <=>
+                        $ (likes' <+> title' <+> lastMod) <=>
                            hBox [category, postsCount', posters']
             where
                 lastMod = padLeft Max
                           . padRight (Pad 1)
                           $ txt (showTimeDelta tNow lastUpdated)
 
-                likes :: Widget ResourceName
-                likes = (if selected then  withAttr "selected" else id)
-                      . padRight (Pad 1)
-                      . hLimit 4
-                      . padRight Max
-                      . txt
-                      . T.pack
-                      . show
-                      $ likeCount
+                likes' :: Widget ResourceName
+                likes' = (if selected then  withAttr "selected" else id)
+                         . padRight (Pad 1)
+                         . hLimit 4
+                         . padRight Max
+                         . txt
+                         . T.pack
+                         . show
+                         $ likeCount
 
                 title' :: Widget ResourceName
                 title' = withAttr "title" . txt $ title
@@ -209,61 +216,78 @@ drawTui (TuiState tNow scrollable Nothing _ _ _) =
                 posters' = padLeft (Pad 5)
                        . hBox
                        . mapFst (withAttr "OP") (withAttr "rest")
-                       . showList
+                       . showItems
                        $ posters
 
                 category :: Widget ResourceName
                 category = padLeft (Pad 5) . txt $ category'
 
                 -- this could perhaps be re-worked now using Vector
-                showList :: V.Vector ResourceName -> [Widget ResourceName]
-                showList v = map txt . V.toList $ (V.map (<> " ") . V.init $ v) V.++ V.singleton (V.last v)
+                showItems :: V.Vector ResourceName -> [Widget ResourceName]
+                showItems v = map txt . V.toList $ (V.map (<> " ") . V.init $ v) V.++ V.singleton (V.last v)
 
 -- this pattern matches the post list
-drawTui (TuiState tNow _ (Just posts) _ False order)
+drawTui (TuiState tNow _ (Just allPosts) _ False order)
     = [WL.renderList drawPost True posts'
        <=> helpBar (Just order)]
     where
-        posts' = orderSelect order posts
+        posts' = orderSelect order allPosts
 
-        drawPost selected (Post id username' createdAt' contents score')
+        -- We need space to get the number/score label but we don't really
+        -- want to indent the following by that much.
+        --
+        drawPost selected post
             = border'
             $ withAttr (if selected then "selected" else "")
-              (hLimit 4 . padRight Max . txt . T.pack . show $ score') 
+              (hLimit 6 . padRight Max . txt $ postIdentifier post)
             <+> ((userName'' <+> created)
                  <=> contents')
             where
-                userName'' = withAttr "OP" . txt $ username'
+                userName'' = withAttr "OP" . txt $ post ^. opUserName
                 created = withAttr "title"
                           . padLeft Max
                           . padRight (Pad 1)
-                          $ txt (showTimeDelta tNow createdAt')
-                contents' = txtWrap contents
+                          $ txt (showTimeDelta tNow (post ^. opCreatedAt))
+                contents' = txtWrap (post ^. contents)
                 border' = border
                         . vLimit 8
                         . padBottom Max
                         . padRight  Max
 
-drawTui (TuiState tNow _ (Just posts) _ True order) =
-  [elem]
+drawTui (TuiState tNow _ (Just allPosts) _ True order) =
+  [showSelectedPost tNow posts'']
   where
     -- We need to invert the count if order is Descending.
     --
-    posts' = WL.listReverse posts
+    posts' = WL.listReverse allPosts
     posts'' = case order of
-      Increasing -> posts
-      Decreasing -> case WL.listSelected posts of
+      Increasing -> allPosts
+      Decreasing -> case WL.listSelected allPosts of
         Just cPos -> WL.listMoveTo cPos posts'
         Nothing -> posts'
 
-    elem = case WL.listSelectedElement posts'' of
-      (Just (_, post)) -> withAttr "OP" (txt (post ^. opUserName)
-                                         <+> padLeft Max (txt (showTimeDelta tNow (post ^. opCreatedAt)))
-                                        )
-                          <=> padBottom Max (txt $ post ^. contents)
-                          <=> helpBar Nothing
-      Nothing -> txt "something went wrong"
+-- The post number and the score
+postIdentifier :: Post -> T.Text
+postIdentifier thisPost =
+  showInt (thisPost ^. postNumber) <> ":" <> showInt (thisPost ^. likes)
 
+showSelectedPost :: UTCTime -> WL.List n Post -> Widget ResourceName
+showSelectedPost tNow allPosts =
+  case WL.listSelectedElement allPosts of
+    (Just (_, thisPost)) ->
+      let topBar = txt (postIdentifier thisPost <>
+                        " " <> thisPost ^. opUserName)
+                   <+> padLeft Max (txt (showTimeDelta tNow (thisPost ^. opCreatedAt)))
+
+      in withAttr "OP" topBar
+         <=> padBottom Max (txt $ thisPost ^. contents)
+         <=> helpBar Nothing
+
+    Nothing -> txt "something went wrong"
+
+
+showInt :: Int -> T.Text
+showInt = T.pack . show
 
 showTimeDelta ::
   UTCTime
@@ -276,9 +300,10 @@ showTimeDelta now old =
   in LT.toStrict (F.format (FT.diff True) dt)
 
 
-
 mapFst :: (a -> a) -> (a -> a) ->  [a] -> [a]
 mapFst fn fn' (x:xs) = fn x : map fn' xs
+mapFst _ _ [] = [] -- make this exhaustive
+
 
 handleTuiEvent :: TuiState -> BrickEvent ResourceName e -> EventM ResourceName (Next TuiState)
 handleTuiEvent tui (VtyEvent (EvKey (KChar 'q') _)) = halt tui
@@ -298,15 +323,15 @@ handleTuiEvent tui@(TuiState _ _ (Just _) _ False order) (VtyEvent (EvKey (KChar
 -- drop the s event in all other cases
 handleTuiEvent tui (VtyEvent (EvKey (KChar 's') _)) = continue tui
 
-handleTuiEvent (TuiState _ topics (Just list) url singlePostView order) (VtyEvent (EvKey KRight _))
+handleTuiEvent (TuiState _ topicList (Just list) url singlePostView order) (VtyEvent (EvKey KRight _))
     = do
   now <- liftIO getCurrentTime
-  continue $ TuiState now topics (Just list) url (not singlePostView) order
+  continue $ TuiState now topicList (Just list) url (not singlePostView) order
 
-handleTuiEvent (TuiState _ topics (Just list) url True order) (VtyEvent (EvKey _ _))
+handleTuiEvent (TuiState _ topicList (Just list) url True order) (VtyEvent (EvKey _ _))
     = do
   now <- liftIO getCurrentTime
-  continue $ TuiState now topics (Just list) url False order
+  continue $ TuiState now topicList (Just list) url False order
 
 handleTuiEvent tui (VtyEvent (EvKey KRight  _)) = do
   now <- liftIO getCurrentTime
@@ -322,9 +347,17 @@ handleTuiEvent tui (VtyEvent (EvKey KLeft   _))
 handleTuiEvent (TuiState now list Nothing url spv order) ev
     = scrollHandler (\x -> TuiState now x Nothing url spv order) list ev
 
-handleTuiEvent (TuiState now topics (Just list) url spv order) ev
-    = scrollHandler (\x -> TuiState now topics (Just x) url spv order) list ev
+handleTuiEvent (TuiState now topicList (Just list) url spv order) ev
+    = scrollHandler (\x -> TuiState now topicList (Just x) url spv order) list ev
 
+-- This is not exhaustive in BrickEvent
+scrollHandler ::
+  Ord n
+  => (WL.List n e -> s)
+  -> WL.List n e
+  -> BrickEvent m f
+  -> EventM n (Next s)
 scrollHandler restoreTuiState list (VtyEvent ev) = continue . restoreTuiState =<< handler
     where
         handler = WL.handleListEvent ev list
+-- scrollHandler restoreTuiState _ _ = continue . restoreTuiState  -- is this correct?

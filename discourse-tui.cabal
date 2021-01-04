@@ -76,5 +76,5 @@ executable discourse-tui
 
   -- Base language which the package is written in.
   default-language:    Haskell2010
-  ghc-options: -threaded
+  ghc-options: -Wall -threaded
 
