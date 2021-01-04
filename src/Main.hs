@@ -226,7 +226,16 @@ drawTui (TuiState tNow scrollable Nothing _ _ _) =
                 showItems :: V.Vector ResourceName -> [Widget ResourceName]
                 showItems v = map txt . V.toList $ (V.map (<> " ") . V.init $ v) V.++ V.singleton (V.last v)
 
--- this pattern matches the post list
+-- This pattern matches the post list.
+--
+-- Note that there is a special case for there only being a single
+-- post: we just display that directly (although it probably complicates
+-- the flow of left/right).
+--
+drawTui tui@(TuiState _ _ (Just allPosts) _ False _) | V.length (WL.listElements allPosts) == 1
+  = let ntui = tui & singlePostView .~ True
+    in drawTui ntui
+
 drawTui (TuiState tNow _ (Just allPosts) _ False order)
     = [WL.renderList drawPost True posts'
        <=> helpBar (Just order)]
@@ -323,10 +332,10 @@ handleTuiEvent tui@(TuiState _ _ (Just _) _ False order) (VtyEvent (EvKey (KChar
 -- drop the s event in all other cases
 handleTuiEvent tui (VtyEvent (EvKey (KChar 's') _)) = continue tui
 
-handleTuiEvent (TuiState _ topicList (Just list) url singlePostView order) (VtyEvent (EvKey KRight _))
+handleTuiEvent (TuiState _ topicList (Just list) url singlePostView' order) (VtyEvent (EvKey KRight _))
     = do
   now <- liftIO getCurrentTime
-  continue $ TuiState now topicList (Just list) url (not singlePostView) order
+  continue $ TuiState now topicList (Just list) url (not singlePostView') order
 
 handleTuiEvent (TuiState _ topicList (Just list) url True order) (VtyEvent (EvKey _ _))
     = do

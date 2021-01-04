@@ -7,6 +7,7 @@ module Types (TuiState(..)
              , topics
              , posts
              , baseURL
+             , singlePostView
              , timeOrder
              , Category
              , categoryId
