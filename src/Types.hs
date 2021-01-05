@@ -17,6 +17,7 @@ module Types (TuiState(..)
              , topicId
              , Post(..)
              , posterId
+             , postId
              , postNumber
              , opUserName
              , opCreatedAt
@@ -30,6 +31,7 @@ module Types (TuiState(..)
              , userName
              , TimeOrder(..)
              , ResourceName
+             , Slug
              , topicHeight
              ) where
 
@@ -107,8 +109,10 @@ instance FromJSON PostResponse where
         postStream <- v .: "post_stream"
         chunkSize <- v .: "chunk_size"
         highestPost <- v .: "highest_post_number"
+        id' <- v .: "id"
+        slug' <- v .: "slug"
         posts' <- postStream .: "posts"
-        return $ PostResponse chunkSize highestPost posts'
+        return $ PostResponse chunkSize highestPost id' slug' posts'
 
 instance FromJSON Post where
     parseJSON = withObject "Post" $ \v -> do
@@ -205,6 +209,8 @@ data PostResponse = PostResponse
   {
     _postChunkSize :: Int
   , _postHighest :: Int
+  , _postResponseId :: Int
+  , _postSlug :: T.Text
   , _postList :: V.Vector Post
   } deriving (Show)
 
@@ -225,17 +231,18 @@ data TuiState = TuiState
     {
       _currentTime :: UTCTime,
       _topics :: List T.Text Topic,
-      _posts :: Maybe (List T.Text Post), -- Nothing if not in post view
+      _posts :: Maybe (Int, Slug, List T.Text Post), -- Nothing if not in post view
       _baseURL :: String,
       _singlePostView :: Bool, -- if we're looking at the full contents of one post
       _timeOrder :: TimeOrder
     } deriving (Show)
 
 type ResourceName = T.Text
+type Slug = T.Text
 
 makeLenses ''CategoryResponse
 makeLenses ''Post
-makeLenses ''PostResponse
+-- makeLenses ''PostResponse
 makeLenses ''Category
 makeLenses ''Poster
 makeLenses ''Topic

@@ -69,6 +69,7 @@ executable discourse-tui
                        text,
                        lens,
                        formatting == 7.1.*,
+                       process == 1.6.*,
                        time == 1.9.*
 
   -- Directories containing source files.

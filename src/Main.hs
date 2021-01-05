@@ -31,7 +31,7 @@ import Network.HTTP.Simple (getResponseBody, httpJSON, parseRequest)
 
 import System.Environment (getArgs)
 import System.Exit (die)
-
+import System.Process (spawnProcess)
 import Text.Pandoc (runIO, def, handleError, readHtml, writeCommonMark)
 
 import Types
@@ -73,22 +73,24 @@ main = do
 
 -- initialize the TuiState with the list of topics and catagories
 getTuiState :: String -> IO TuiState
+getTuiState "" = die "The discourse URL is empty"
 getTuiState baseUrl = do
-    topicsRequest <- parseRequest (baseUrl ++ "/latest.json")
-    categoriesRequest <- parseRequest (baseUrl ++ "/categories.json")
-    categoriesResp <- getResponseBody <$> httpJSON categoriesRequest
-    (TopicResponse users topicList) <- getResponseBody <$> httpJSON topicsRequest
-    let userMap     = M.fromList . V.toList . V.map (\x -> (x ^. userId, x)) $ users
-    let categoryMap = M.fromList . V.toList . V.map (\x -> (x ^. categoryId, x)) $ categoriesResp ^. categories
-    now <- getCurrentTime
-    pure TuiState {
-      _currentTime = now,
-      _posts = Nothing,
-      _topics = WL.list "contents" (V.map (parseTopic userMap categoryMap) topicList) topicHeight,
-      _baseURL = baseUrl,
-      _singlePostView = False,
-      _timeOrder = Increasing
-      }
+  let baseUrl' = if last baseUrl == '/' then baseUrl else baseUrl <> "/"
+  topicsRequest <- parseRequest (baseUrl' <> "latest.json")
+  categoriesRequest <- parseRequest (baseUrl' <> "categories.json")
+  categoriesResp <- getResponseBody <$> httpJSON categoriesRequest
+  (TopicResponse users topicList) <- getResponseBody <$> httpJSON topicsRequest
+  let userMap = M.fromList . V.toList . V.map (\x -> (x ^. userId, x)) $ users
+      categoryMap = M.fromList . V.toList . V.map (\x -> (x ^. categoryId, x)) $ categoriesResp ^. categories
+  now <- getCurrentTime
+  pure TuiState {
+    _currentTime = now,
+    _posts = Nothing,
+    _topics = WL.list "contents" (V.map (parseTopic userMap categoryMap) topicList) topicHeight,
+    _baseURL = baseUrl',
+    _singlePostView = False,
+    _timeOrder = Increasing
+    }
 
 -- the help bar at the bottom
 helpBar :: Maybe TimeOrder -> Widget ResourceName
@@ -112,15 +114,15 @@ helpBar mOrder = withAttr "bar" widget
 --       up to 1000 posts, which should be good for me (as I can't see an obvious
 --       pagination feature). Hmm, this seems to trigger user-access restrictions!
 --
-getPosts :: TuiState -> IO (WL.List ResourceName Post)
+getPosts :: TuiState -> IO (Int, Slug, WL.List ResourceName Post)
 getPosts ts = do
     let Just selectedTopicID = view (_2 . topicId) <$> WL.listSelectedElement (ts ^. topics)
         postURL = mconcat [ts ^. baseURL, "/t/", show selectedTopicID, ".json" {- , "?print=true" -}]
 
     postsRequest <- parseRequest postURL
-    (PostResponse _ maxCount posts') <- getResponseBody <$> httpJSON postsRequest
+    (PostResponse _ maxCount postid slug posts') <- getResponseBody <$> httpJSON postsRequest
     allPosts <- mapM postToPandoc posts'
-    pure $ WL.list "posts" allPosts 10
+    pure (postid, slug, WL.list "posts" allPosts 10)
 
 postToPandoc :: Post -> IO Post
 postToPandoc post = do
@@ -232,11 +234,11 @@ drawTui (TuiState tNow scrollable Nothing _ _ _) =
 -- post: we just display that directly (although it probably complicates
 -- the flow of left/right).
 --
-drawTui tui@(TuiState _ _ (Just allPosts) _ False _) | V.length (WL.listElements allPosts) == 1
+drawTui tui@(TuiState _ _ (Just (_, _, allPosts)) _ False _) | listLength allPosts == 1
   = let ntui = tui & singlePostView .~ True
     in drawTui ntui
 
-drawTui (TuiState tNow _ (Just allPosts) _ False order)
+drawTui (TuiState tNow _ (Just (_, _, allPosts)) _ False order)
     = [WL.renderList drawPost True posts'
        <=> helpBar (Just order)]
     where
@@ -263,7 +265,7 @@ drawTui (TuiState tNow _ (Just allPosts) _ False order)
                         . padBottom Max
                         . padRight  Max
 
-drawTui (TuiState tNow _ (Just allPosts) _ True order) =
+drawTui (TuiState tNow _ (Just (_, _, allPosts)) _ True order) =
   [showSelectedPost tNow posts'']
   where
     -- We need to invert the count if order is Descending.
@@ -332,15 +334,36 @@ handleTuiEvent tui@(TuiState _ _ (Just _) _ False order) (VtyEvent (EvKey (KChar
 -- drop the s event in all other cases
 handleTuiEvent tui (VtyEvent (EvKey (KChar 's') _)) = continue tui
 
-handleTuiEvent (TuiState _ topicList (Just list) url singlePostView' order) (VtyEvent (EvKey KRight _))
-    = do
-  now <- liftIO getCurrentTime
-  continue $ TuiState now topicList (Just list) url (not singlePostView') order
+-- The v keypress will load the URL in a web browser (Linux only,
+-- and only those that support the gio command):
+--
+-- topics, posts = Nothing, singlePostView = _ -> /latest
+-- topics, posts = Just _, singlePostView is False -> /t/slug/id
+-- topics, posts = Just _, singlePostView is True -> /t/slug/id/number
+--
+handleTuiEvent tui (VtyEvent (EvKey (KChar 'v') _)) = do
+  let frag = case tui ^. posts of
+               Just (pid, pslug, plist) ->
+                 let n = case WL.listSelectedElement plist of
+                       Just (_, post) -> post ^. postNumber
+                       Nothing -> 1
 
-handleTuiEvent (TuiState _ topicList (Just list) url True order) (VtyEvent (EvKey _ _))
+                 in "t/" <> pslug <> "/" <> showInt pid <>
+                    if tui ^. singlePostView then "/" <> showInt n else ""
+               Nothing -> "latest"
+
+  liftIO (showPage (tui ^. baseURL) frag)
+  continue tui
+
+handleTuiEvent (TuiState _ topicList (Just allPosts) url singlePostView' order) (VtyEvent (EvKey KRight _))
     = do
   now <- liftIO getCurrentTime
-  continue $ TuiState now topicList (Just list) url False order
+  continue $ TuiState now topicList (Just allPosts) url (not singlePostView') order
+
+handleTuiEvent (TuiState _ topicList (Just allPosts) url True order) (VtyEvent (EvKey _ _))
+    = do
+  now <- liftIO getCurrentTime
+  continue $ TuiState now topicList (Just allPosts) url False order
 
 handleTuiEvent tui (VtyEvent (EvKey KRight  _)) = do
   now <- liftIO getCurrentTime
@@ -356,8 +379,15 @@ handleTuiEvent tui (VtyEvent (EvKey KLeft   _))
 handleTuiEvent (TuiState now list Nothing url spv order) ev
     = scrollHandler (\x -> TuiState now x Nothing url spv order) list ev
 
-handleTuiEvent (TuiState now topicList (Just list) url spv order) ev
-    = scrollHandler (\x -> TuiState now topicList (Just x) url spv order) list ev
+handleTuiEvent (TuiState now topicList (Just (pid, pslug, list)) url spv order) ev
+    = scrollHandler (\x -> TuiState now topicList (Just (pid, pslug, x)) url spv order) list ev
+
+listLength :: WL.List n a -> Int
+listLength = V.length . WL.listElements
+
+-- | Try to load the page into a web browser. This is highly OS dependent.
+showPage :: String -> T.Text -> IO ()
+showPage base frag = void $ spawnProcess "gio" ["open", base <> T.unpack frag]
 
 -- This is not exhaustive in BrickEvent
 scrollHandler ::
