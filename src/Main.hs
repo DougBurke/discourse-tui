@@ -329,6 +329,12 @@ mapFst fn fn' (x:xs) = fn x : map fn' xs
 mapFst _ _ [] = [] -- make this exhaustive
 
 
+updateTime :: TuiState -> IO TuiState
+updateTime tui = do
+  now <- getCurrentTime
+  pure $ tui & currentTime .~ now
+
+
 handleTuiEvent :: TuiState -> BrickEvent ResourceName e -> EventM ResourceName (Next TuiState)
 handleTuiEvent tui (VtyEvent (EvKey (KChar 'q') _)) = halt tui
 
@@ -370,25 +376,23 @@ handleTuiEvent tui (VtyEvent (EvKey (KChar 'v') _)) = do
 
 handleTuiEvent tui (VtyEvent (EvKey KRight _)) | isJust (tui ^. posts)
   = do
-  now <- liftIO getCurrentTime
-  let ntui = tui & currentTime .~ now & singlePostView .~ not (tui ^. singlePostView)
-  continue ntui
+  ntui <- liftIO (updateTime tui)
+  continue $ ntui & singlePostView .~ not (ntui ^. singlePostView)
 
 handleTuiEvent tui (VtyEvent (EvKey _ _)) | isJust (tui ^. posts) && (tui ^. singlePostView)
   = do
-  now <- liftIO getCurrentTime
-  let ntui = tui & currentTime .~ now & singlePostView .~ False
-  continue ntui
+  ntui <- liftIO (updateTime tui)
+  continue $ ntui & singlePostView .~ False
 
 handleTuiEvent tui (VtyEvent (EvKey KRight  _)) = do
-  now <- liftIO getCurrentTime
-  posts' <- liftIO $ getPosts tui
-  continue $ tui & currentTime .~ now & posts ?~ posts'
+  ntui <- liftIO (updateTime tui)
+  posts' <- liftIO $ getPosts ntui
+  continue $ ntui & posts ?~ posts'
 
 handleTuiEvent tui (VtyEvent (EvKey KLeft   _))
     = do
-  now <- liftIO getCurrentTime
-  continue $ tui & currentTime .~ now & posts .~ Nothing
+  ntui <- liftIO (updateTime tui)
+  continue $ ntui & posts .~ Nothing
 
 -- Should we update the time in these cases? It would make the display
 -- "reactive", but it also might be confusing when scrolling to see
@@ -409,7 +413,6 @@ listLength = V.length . WL.listElements
 showPage :: String -> T.Text -> IO ()
 showPage base frag = void $ spawnProcess "gio" ["open", base <> T.unpack frag]
 
--- This is not exhaustive in BrickEvent
 scrollHandler ::
   Ord n
   => (WL.List n e -> s)
@@ -419,4 +422,4 @@ scrollHandler ::
 scrollHandler restoreTuiState list (VtyEvent ev) = continue . restoreTuiState =<< handler
     where
         handler = WL.handleListEvent ev list
--- scrollHandler restoreTuiState _ _ = continue . restoreTuiState  -- is this correct?
+scrollHandler restoreTuiState list _ = continue $ restoreTuiState list  -- is this correct?
