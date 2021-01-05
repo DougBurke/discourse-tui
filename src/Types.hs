@@ -13,9 +13,17 @@ module Types (TuiState(..)
              , categoryId
              , categoryName
              , categories
-             , ProtoTopic(..)
-             , topicId
+             , ProtoTopic
+             , pTopicId
+             , pCategoryId
+             , pTitle
+             , pLastUpdated
+             , pLikeCount
+             , pPostsCount
+             , pPosters
+             , pPinned
              , Post(..)
+             , topicId
              , posterId
              , postId
              , postNumber
@@ -23,9 +31,16 @@ module Types (TuiState(..)
              , opCreatedAt
              , contents
              , likes
-             , PostResponse(..)
+             , PostResponse
+             , postChunkSize
+             , postHighest
+             , postResponseId
+             , postSlug
+             , postList
              , Topic(..)
-             , TopicResponse(..)
+             , TopicResponse
+             , tpUsers
+             , tpTopicList
              , User
              , userId
              , userName
@@ -153,8 +168,8 @@ data Action = Action
 
 data TopicResponse = TopicResponse
     {
-    _users :: V.Vector User,
-    _topicList :: V.Vector ProtoTopic
+    _tpUsers :: V.Vector User,
+    _tpTopicList :: V.Vector ProtoTopic
     } deriving (Show)
 
 topicHeight :: Int
@@ -162,14 +177,14 @@ topicHeight = 4
 
 data ProtoTopic = ProtoTopic
     {
-    _topicId :: Int,
-    _categoryID :: Int,
-    _title :: T.Text,
-    _lastUpdatedProyo :: UTCTime,
-    _likeCount :: Int,
-    _postsCount :: Int,
-    _posters :: V.Vector Poster,
-    _pinned :: Bool
+    _pTopicId :: Int,
+    _pCategoryId :: Int,
+    _pTitle :: T.Text,
+    _pLastUpdated :: UTCTime,
+    _pLikeCount :: Int,
+    _pPostsCount :: Int,
+    _pPosters :: V.Vector Poster,
+    _pPinned :: Bool
     } deriving (Show)
 
 data Topic = Topic
@@ -242,9 +257,10 @@ type Slug = T.Text
 
 makeLenses ''CategoryResponse
 makeLenses ''Post
--- makeLenses ''PostResponse
+makeLenses ''PostResponse
 makeLenses ''Category
 makeLenses ''Poster
+makeLenses ''ProtoTopic
 makeLenses ''Topic
 makeLenses ''TopicResponse
 makeLenses ''Action

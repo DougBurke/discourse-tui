@@ -18,10 +18,11 @@ import Control.Monad.IO.Class (liftIO)
 import Brick
 import Brick.Widgets.Border
 
-import Control.Lens ((&), (?~), (.~), (^.), _2
+import Control.Lens ((&), (?~), (.~), (^.), _2, _3
                     , view)
 import Control.Monad (void)
 
+import Data.Maybe (isJust)
 import Data.Time (UTCTime, diffUTCTime, getCurrentTime)
 
 import Graphics.Vty.Input.Events (Event(..), Key(..))
@@ -43,16 +44,16 @@ import Types
 -- the categories endpoint which is less-than-ideal.
 --
 parseTopic :: M.IntMap User -> M.IntMap Category -> ProtoTopic -> Topic
-parseTopic userMap catagoryMap (ProtoTopic topicId' catId title lastUpdated likeC postsC posters pinned)
+parseTopic userMap catagoryMap pt
     = Topic {
-        _title = title,
-        _topicId = topicId',
-        _category = (catagoryMap M.! catId) ^. categoryName,
-        _lastUpdated = lastUpdated,
-        _likeCount = likeC,
-        _postsCount = postsC,
-        _posters = V.map (\x -> (userMap M.! (x ^. posterId)) ^. userName) posters,
-        _pinned = pinned
+        _title = pt ^. pTitle,
+        _topicId = pt ^. pTopicId,
+        _category = (catagoryMap M.! (pt ^. pCategoryId)) ^. categoryName,
+        _lastUpdated = pt ^. pLastUpdated,
+        _likeCount = pt ^. pLikeCount,
+        _postsCount = pt ^. pPostsCount,
+        _posters = V.map (\x -> (userMap M.! (x ^. posterId)) ^. userName) (pt ^. pPosters),
+        _pinned = pt ^. pPinned
             }
 
 helpMessage :: String
@@ -79,8 +80,10 @@ getTuiState baseUrl = do
   topicsRequest <- parseRequest (baseUrl' <> "latest.json")
   categoriesRequest <- parseRequest (baseUrl' <> "categories.json")
   categoriesResp <- getResponseBody <$> httpJSON categoriesRequest
-  (TopicResponse users topicList) <- getResponseBody <$> httpJSON topicsRequest
-  let userMap = M.fromList . V.toList . V.map (\x -> (x ^. userId, x)) $ users
+  tps <- getResponseBody <$> httpJSON topicsRequest
+  let users = tps ^. tpUsers
+      topicList = tps ^. tpTopicList
+      userMap = M.fromList . V.toList . V.map (\x -> (x ^. userId, x)) $ users
       categoryMap = M.fromList . V.toList . V.map (\x -> (x ^. categoryId, x)) $ categoriesResp ^. categories
   now <- getCurrentTime
   pure TuiState {
@@ -105,8 +108,7 @@ helpBar mOrder = withAttr "bar" widget
     dir Increasing = "↑" -- unicode 2191  "+"
     dir Decreasing = "↓" -- unicode 2193  "-"
 
-    dirMsg order = padLeft Max
-             $ txt (dir order)
+    dirMsg order = padLeft Max $ txt (dir order)
 
 -- get the posts for the current topic
 --
@@ -120,9 +122,9 @@ getPosts ts = do
         postURL = mconcat [ts ^. baseURL, "/t/", show selectedTopicID, ".json" {- , "?print=true" -}]
 
     postsRequest <- parseRequest postURL
-    (PostResponse _ maxCount postid slug posts') <- getResponseBody <$> httpJSON postsRequest
-    allPosts <- mapM postToPandoc posts'
-    pure (postid, slug, WL.list "posts" allPosts 10)
+    pr <- getResponseBody <$> httpJSON postsRequest
+    allPosts <- mapM postToPandoc (pr ^. postList)
+    pure (pr ^. postResponseId, pr ^. postSlug, WL.list "posts" allPosts 10)
 
 postToPandoc :: Post -> IO Post
 postToPandoc post = do
@@ -322,8 +324,8 @@ handleTuiEvent tui (VtyEvent (EvKey (KChar 'q') _)) = halt tui
 -- We only change the setting when the posts are listed, not
 -- in all cases.
 -- handleTuiEvent tui (VtyEvent (EvKey (KChar 's') _)) =
-handleTuiEvent tui@(TuiState _ _ (Just _) _ False order) (VtyEvent (EvKey (KChar 's') _)) =
-  let new = case order of
+handleTuiEvent tui (VtyEvent (EvKey (KChar 's') _)) | isJust (tui ^. posts) && not (tui ^. singlePostView) =
+  let new = case tui ^. timeOrder of
               Decreasing -> Increasing
               Increasing -> Decreasing
 
@@ -355,15 +357,17 @@ handleTuiEvent tui (VtyEvent (EvKey (KChar 'v') _)) = do
   liftIO (showPage (tui ^. baseURL) frag)
   continue tui
 
-handleTuiEvent (TuiState _ topicList (Just allPosts) url singlePostView' order) (VtyEvent (EvKey KRight _))
-    = do
+handleTuiEvent tui (VtyEvent (EvKey KRight _)) | isJust (tui ^. posts)
+  = do
   now <- liftIO getCurrentTime
-  continue $ TuiState now topicList (Just allPosts) url (not singlePostView') order
+  let ntui = tui & currentTime .~ now & singlePostView .~ not (tui ^. singlePostView)
+  continue ntui
 
-handleTuiEvent (TuiState _ topicList (Just allPosts) url True order) (VtyEvent (EvKey _ _))
-    = do
+handleTuiEvent tui (VtyEvent (EvKey _ _)) | isJust (tui ^. posts) && (tui ^. singlePostView)
+  = do
   now <- liftIO getCurrentTime
-  continue $ TuiState now topicList (Just allPosts) url False order
+  let ntui = tui & currentTime .~ now & singlePostView .~ False
+  continue ntui
 
 handleTuiEvent tui (VtyEvent (EvKey KRight  _)) = do
   now <- liftIO getCurrentTime
@@ -375,12 +379,17 @@ handleTuiEvent tui (VtyEvent (EvKey KLeft   _))
   now <- liftIO getCurrentTime
   continue $ tui & currentTime .~ now & posts .~ Nothing
 
--- should we update the time in these cases?
-handleTuiEvent (TuiState now list Nothing url spv order) ev
-    = scrollHandler (\x -> TuiState now x Nothing url spv order) list ev
+-- Should we update the time in these cases? It would make the display
+-- "reactive", but it also might be confusing when scrolling to see
+-- the times change.
+--
+handleTuiEvent tui ev | isJust (tui ^. posts)
+  = let Just posts' = tui ^. posts
+        list = posts' ^. _3
+    in scrollHandler (\x -> tui & posts ?~ (posts' & _3 .~ x)) list ev
 
-handleTuiEvent (TuiState now topicList (Just (pid, pslug, list)) url spv order) ev
-    = scrollHandler (\x -> TuiState now topicList (Just (pid, pslug, x)) url spv order) list ev
+handleTuiEvent tui ev
+    = scrollHandler (\x -> tui & topics .~ x) (tui ^. topics) ev
 
 listLength :: WL.List n a -> Int
 listLength = V.length . WL.listElements
