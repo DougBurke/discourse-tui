@@ -106,7 +106,8 @@ getTuiState baseUrl = do
     _timeOrder = Increasing
     }
 
--- the help bar at the bottom
+-- The help bar at the bottom, for most pages.
+--
 helpBar :: Maybe TimeOrder -> Widget ResourceName
 helpBar mOrder = withAttr "bar" widget
   where
@@ -116,10 +117,35 @@ helpBar mOrder = withAttr "bar" widget
 
     msgBase = "arrow keys -> move | left right -> read replies/full post | q to quit"
     msgFull = "arrow keys -> move | left right -> read replies/full post | s swap order | q to quit"
-    dir Increasing = "↑" -- unicode 2191  "+"
-    dir Decreasing = "↓" -- unicode 2193  "-"
 
-    dirMsg order = padLeft Max $ txt (dir order)
+    dirMsg order = padLeft Max $ txt (showOrder order)
+
+-- The help bar for the single-post page
+helpPostBar :: TimeOrder -> Int -> Int -> Widget ResourceName
+helpPostBar order cur nposts = withAttr "bar" widget
+  where
+    widget = txt msgBase <+> padLeft Max (txt right)
+
+    right = if nposts == 1
+            then ""
+            else showInt n <> "/" <> showInt nposts <> " " <> showOrder order
+
+    -- note: cur is 1 based
+    n = case order of
+          Increasing -> cur
+          Decreasing -> nposts - cur + 1
+
+    msgBase = "left -> full post | "
+              <> (if nposts == 1
+                  then ""
+                  else "up/down -> previous/next | s swap order | ")
+              <> "q to quit"
+
+
+showOrder :: TimeOrder -> T.Text
+showOrder Increasing = "↑" -- unicode 2191  "+"
+showOrder Decreasing = "↓" -- unicode 2193  "-"
+
 
 -- get the posts for the current topic
 --
@@ -130,7 +156,7 @@ helpBar mOrder = withAttr "bar" widget
 getPosts :: TuiState -> IO (Int, Slug, WL.List ResourceName Post)
 getPosts ts = do
     let Just selectedTopicID = view (_2 . topicId) <$> WL.listSelectedElement (ts ^. topics)
-        postURL = mconcat [ts ^. baseURL, "/t/", show selectedTopicID, ".json" {- , "?print=true" -}]
+        postURL = mconcat [ts ^. baseURL, "t/", show selectedTopicID, ".json" {- , "?print=true" -}]
 
     postsRequest <- parseRequest postURL
     pr <- getResponseBody <$> httpJSON postsRequest
@@ -246,7 +272,7 @@ drawTui tui | isNothing (tui ^. posts) =
 -- post or not.
 --
 drawTui tui | tui ^. singlePostView =
-  [showSelectedPost (tui ^. currentTime) posts'']
+  [showSelectedPost (tui ^. currentTime) (tui ^. timeOrder) posts'']
   where
     Just allPosts = view _3 <$> tui ^. posts  -- must be a Just
     order = tui ^. timeOrder
@@ -301,17 +327,19 @@ postIdentifier :: Post -> T.Text
 postIdentifier thisPost =
   showInt (thisPost ^. postNumber) <> ":" <> showInt (thisPost ^. likes)
 
-showSelectedPost :: UTCTime -> WL.List n Post -> Widget ResourceName
-showSelectedPost tNow allPosts =
+showSelectedPost :: UTCTime -> TimeOrder -> WL.List n Post -> Widget ResourceName
+showSelectedPost tNow order allPosts =
   case WL.listSelectedElement allPosts of
-    (Just (_, thisPost)) ->
+    (Just (ctr, thisPost)) ->
       let topBar = txt (postIdentifier thisPost <>
                         " " <> thisPost ^. opUserName)
                    <+> padLeft Max (txt (showTimeDelta tNow (thisPost ^. opCreatedAt)))
 
+          nPosts = listLength allPosts
+
       in withAttr "OP" topBar
          <=> padBottom Max (txt $ thisPost ^. contents)
-         <=> helpBar Nothing
+         <=> helpPostBar order (ctr + 1) nPosts
 
     Nothing -> txt "something went wrong"
 
@@ -379,6 +407,25 @@ handleTuiEvent tui (VtyEvent (EvKey (KChar 'v') _)) = do
 
   liftIO (showPage (tui ^. baseURL) frag)
   continue tui
+
+-- up/down key presses on the single-page view will scroll through the
+-- replies. up maps to previous, down to next whatever the search order.
+--
+handleTuiEvent tui (VtyEvent (EvKey k _)) | tui ^. singlePostView && k `elem` [KUp, KDown]
+  = let Just posts' = tui ^. posts
+
+        -- If we didn't want to make up always go bavkwards in time
+        -- then we could check on k.
+        step = case (k, tui ^. timeOrder) of
+          (KUp, Increasing) -> -1
+          (KDown, Decreasing) -> -1
+          _ -> 1
+
+        nlist = WL.listMoveBy step (posts' ^. _3)
+
+        ntui = tui & posts ?~ (posts' & _3 .~ nlist)
+
+    in continue ntui
 
 handleTuiEvent tui (VtyEvent (EvKey KRight _)) | isJust (tui ^. posts)
   = do
