@@ -23,7 +23,7 @@ import Control.Lens (Getting
                     , view)
 import Control.Monad (void)
 
-import Data.Maybe (isJust)
+import Data.Maybe (isJust, isNothing)
 import Data.Time (UTCTime, diffUTCTime, getCurrentTime)
 
 import Graphics.Vty.Input.Events (Event(..), Key(..))
@@ -192,8 +192,8 @@ tuiApp =
 -- draws the entire TuiState
 -- this pattern matches the topic list
 drawTui :: TuiState -> [Widget ResourceName]
-drawTui (TuiState tNow scrollable Nothing _ _ _) =
-  [WL.renderList drawTopic True scrollable <=> helpBar Nothing]
+drawTui tui | isNothing (tui ^. posts) =
+  [WL.renderList drawTopic True (tui ^. topics) <=> helpBar Nothing]
     where
         drawTopic selected (Topic _ category' title lastUpdated likeCount postsCount posters pinned)
                         = border
@@ -204,7 +204,7 @@ drawTui (TuiState tNow scrollable Nothing _ _ _) =
             where
                 lastMod = padLeft Max
                           . padRight (Pad 1)
-                          $ txt (showTimeDelta tNow lastUpdated)
+                          $ txt (showTimeDelta (tui ^. currentTime) lastUpdated)
 
                 likes' :: Widget ResourceName
                 likes' = (if selected then  withAttr "selected" else id)
@@ -241,20 +241,38 @@ drawTui (TuiState tNow scrollable Nothing _ _ _) =
                 showItems :: V.Vector ResourceName -> [Widget ResourceName]
                 showItems v = map txt . V.toList $ (V.map (<> " ") . V.init $ v) V.++ V.singleton (V.last v)
 
--- This pattern matches the post list.
+-- We have checked for the topic list, so we are now
+-- showing a topic. The issue is whether we are showing a single
+-- post or not.
 --
--- Note that there is a special case for there only being a single
--- post: we just display that directly (although it probably complicates
--- the flow of left/right).
+drawTui tui | tui ^. singlePostView =
+  [showSelectedPost (tui ^. currentTime) posts'']
+  where
+    Just allPosts = view _3 <$> tui ^. posts  -- must be a Just
+    order = tui ^. timeOrder
+
+    -- We need to invert the count if order is Descending.
+    --
+    posts' = WL.listReverse allPosts
+    posts'' = case order of
+      Increasing -> allPosts
+      Decreasing -> case WL.listSelected allPosts of
+        Just cPos -> WL.listMoveTo cPos posts'
+        Nothing -> posts'
+
+-- Special case the single-list case so that we jump to display
+-- the post.
 --
-drawTui tui@(TuiState _ _ (Just (_, _, allPosts)) _ False _) | listLength allPosts == 1
+drawTui tui | (listLength . view _3 <$> tui ^. posts) == Just 1
   = let ntui = tui & singlePostView .~ True
     in drawTui ntui
 
-drawTui (TuiState tNow _ (Just (_, _, allPosts)) _ False order)
+drawTui tui
     = [WL.renderList drawPost True posts'
        <=> helpBar (Just order)]
     where
+        Just allPosts = view _3 <$> tui ^. posts
+        order = tui ^. timeOrder
         posts' = orderSelect order allPosts
 
         -- We need space to get the number/score label but we don't really
@@ -271,24 +289,12 @@ drawTui (TuiState tNow _ (Just (_, _, allPosts)) _ False order)
                 created = withAttr "title"
                           . padLeft Max
                           . padRight (Pad 1)
-                          $ txt (showTimeDelta tNow (post ^. opCreatedAt))
+                          $ txt (showTimeDelta (tui ^. currentTime) (post ^. opCreatedAt))
                 contents' = txtWrap (post ^. contents)
                 border' = border
                         . vLimit 8
                         . padBottom Max
                         . padRight  Max
-
-drawTui (TuiState tNow _ (Just (_, _, allPosts)) _ True order) =
-  [showSelectedPost tNow posts'']
-  where
-    -- We need to invert the count if order is Descending.
-    --
-    posts' = WL.listReverse allPosts
-    posts'' = case order of
-      Increasing -> allPosts
-      Decreasing -> case WL.listSelected allPosts of
-        Just cPos -> WL.listMoveTo cPos posts'
-        Nothing -> posts'
 
 -- The post number and the score
 postIdentifier :: Post -> T.Text
