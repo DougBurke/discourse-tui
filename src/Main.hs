@@ -18,7 +18,8 @@ import Control.Monad.IO.Class (liftIO)
 import Brick
 import Brick.Widgets.Border
 
-import Control.Lens ((&), (?~), (.~), (^.), _2, _3
+import Control.Lens (Getting
+                    , (&), (?~), (.~), (^.), _2, _3
                     , view)
 import Control.Monad (void)
 
@@ -77,19 +78,29 @@ getTuiState :: String -> IO TuiState
 getTuiState "" = die "The discourse URL is empty"
 getTuiState baseUrl = do
   let baseUrl' = if last baseUrl == '/' then baseUrl else baseUrl <> "/"
+
   topicsRequest <- parseRequest (baseUrl' <> "latest.json")
   categoriesRequest <- parseRequest (baseUrl' <> "categories.json")
   categoriesResp <- getResponseBody <$> httpJSON categoriesRequest
   tps <- getResponseBody <$> httpJSON topicsRequest
+
   let users = tps ^. tpUsers
       topicList = tps ^. tpTopicList
-      userMap = M.fromList . V.toList . V.map (\x -> (x ^. userId, x)) $ users
-      categoryMap = M.fromList . V.toList . V.map (\x -> (x ^. categoryId, x)) $ categoriesResp ^. categories
+
+      tokenize :: Getting M.Key a M.Key -> V.Vector a -> M.IntMap a
+      tokenize f = M.fromList . V.toList . V.map (\x -> (x ^. f, x))
+
+      userMap = tokenize userId users
+      categoryMap = tokenize categoryId $ categoriesResp ^. categories
+
+      widgetList = V.map (parseTopic userMap categoryMap) topicList
+      topics' = WL.list "contents" widgetList topicHeight
+
   now <- getCurrentTime
   pure TuiState {
     _currentTime = now,
+    _topics = topics',
     _posts = Nothing,
-    _topics = WL.list "contents" (V.map (parseTopic userMap categoryMap) topicList) topicHeight,
     _baseURL = baseUrl',
     _singlePostView = False,
     _timeOrder = Increasing
