@@ -17,8 +17,13 @@ import qualified Formatting.Time as FT
 
 import Control.Monad.IO.Class (liftIO)
 
-import Brick
-import Brick.Widgets.Border
+import Brick (BrickEvent(..), App(..), EventM, Next, Padding(..), Widget,
+              (<=>), (<+>),
+              attrMap, bg, continue, defaultMain,
+              fg, halt, hBox, hLimit, neverShowCursor,
+              padBottom, padLeft, padRight,
+              txt, txtWrap, vLimit, withAttr)
+import Brick.Widgets.Border (border)
 
 import Control.Lens (Getting
                     , (&), (?~), (.~), (^.), _2, _3
