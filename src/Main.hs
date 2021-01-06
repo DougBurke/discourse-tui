@@ -5,7 +5,9 @@ module Main (main) where
 
 import qualified Brick.Widgets.List as WL
 
+import qualified Data.ByteString.Char8 as B
 import qualified Data.IntMap.Strict as M
+import qualified Data.Set as S
 import qualified Data.Text as T
 import qualified Data.Text.Lazy as LT
 import qualified Data.Vector as V
@@ -23,13 +25,15 @@ import Control.Lens (Getting
                     , view)
 import Control.Monad (void)
 
+import Data.Functor ((<&>))
+import Data.List.Split (chunksOf)
 import Data.Maybe (isJust, isNothing)
 import Data.Time (UTCTime, diffUTCTime, getCurrentTime)
 
 import Graphics.Vty.Input.Events (Event(..), Key(..))
 import Graphics.Vty.Attributes (blue, bold, defAttr, green, withStyle, yellow)
 
-import Network.HTTP.Simple (getResponseBody, httpJSON, parseRequest)
+import Network.HTTP.Simple (getResponseBody, httpJSON, parseRequest, setRequestQueryString)
 
 import System.Environment (getArgs)
 import System.Exit (die)
@@ -149,19 +153,44 @@ showOrder Decreasing = "↓" -- unicode 2193  "-"
 
 -- get the posts for the current topic
 --
--- TODO: pagination, but for now just use ?print=true which is meant to get
---       up to 1000 posts, which should be good for me (as I can't see an obvious
---       pagination feature). Hmm, this seems to trigger user-access restrictions!
+-- For pagination use /t/<id>/posts.json?post_ids[]=n1&post_ids[]=n2...
+-- but this returns HTML-encoded, rather than the "markup" style you get
+-- from the original set of posts!
 --
 getPosts :: TuiState -> IO (Int, Slug, WL.List ResourceName Post)
 getPosts ts = do
     let Just selectedTopicID = view (_2 . topicId) <$> WL.listSelectedElement (ts ^. topics)
-        postURL = mconcat [ts ^. baseURL, "t/", show selectedTopicID, ".json" {- , "?print=true" -}]
+        postURL = mconcat [ts ^. baseURL, "t/", show selectedTopicID, ".json"]
+        extraURL = mconcat [ts ^. baseURL, "t/", show selectedTopicID, "/posts.json"]
 
     postsRequest <- parseRequest postURL
     pr <- getResponseBody <$> httpJSON postsRequest
-    allPosts <- mapM postToPandoc (pr ^. postList)
+    basePosts <- mapM postToPandoc (pr ^. postList)
+
+    let allIds = S.fromList . V.toList $ pr ^. postIds
+        gotIds = S.fromList . V.toList . V.map (^. postId) $ pr ^. postList
+        extraIds = S.toList (allIds `S.difference` gotIds)
+
+    extraPosts <- getExtraPosts extraURL extraIds >>= mapM postToPandoc
+
+    let allPosts = basePosts V.++ extraPosts
     pure (pr ^. postResponseId, pr ^. postSlug, WL.list "posts" allPosts 10)
+
+
+getExtraPosts :: String -> [Int] -> IO (V.Vector Post)
+getExtraPosts _ [] = pure V.empty
+getExtraPosts baseUrl ids =
+  let chunks = chunksOf 20 ids
+
+      getChunks xs = do
+        let qry = map (\x -> ("post_ids[]", toN x)) xs
+            toN = Just . B.pack . show
+        req <- parseRequest baseUrl
+        let req' = setRequestQueryString qry req
+        rsp <- getResponseBody <$> httpJSON req'
+        pure (rsp ^. postSelList)
+
+  in mapM getChunks chunks <&> V.concat
 
 postToPandoc :: Post -> IO Post
 postToPandoc post = do

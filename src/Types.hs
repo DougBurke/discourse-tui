@@ -37,6 +37,9 @@ module Types (TuiState(..)
              , postResponseId
              , postSlug
              , postList
+             , postIds
+             , PostSelectedResponse
+             , postSelList
              , Topic(..)
              , TopicResponse
              , tpUsers
@@ -66,7 +69,7 @@ instance FromJSON ProtoTopic where
     parseJSON = withObject "ProtoTopic" $ \v -> do 
         topicId' <- v .: "id"
         title'  <- v .: "title"
-        lastUpdated' <- v .: "last_posted_at"  -- canthis be empty or missing?
+        lastUpdated' <- v .: "last_posted_at"  -- can this be empty or missing?
         likeCount' <- v.: "like_count"
         postsCount' <- v.: "posts_count"
         posters' <- v.: "posters"
@@ -119,15 +122,27 @@ instance FromJSON CategoryResponse where
 
         return $ CategoryResponse $ categories' V.++ extra'
 
+-- post_stream.stream is a list of integers of all the items;
+-- these give the id of the individual posts, so we can find the
+-- missing records. How do we then grab that data?
+--
 instance FromJSON PostResponse where
-    parseJSON = withObject "PastResponse" $ \v -> do
+    parseJSON = withObject "PostResponse" $ \v -> do
         postStream <- v .: "post_stream"
         chunkSize <- v .: "chunk_size"
+        -- do we want highest_post_number or posts_count or .. ?
         highestPost <- v .: "highest_post_number"
         id' <- v .: "id"
         slug' <- v .: "slug"
         posts' <- postStream .: "posts"
-        return $ PostResponse chunkSize highestPost id' slug' posts'
+        postids <- postStream .: "stream"
+        return $ PostResponse chunkSize highestPost id' slug' posts' postids
+
+instance FromJSON PostSelectedResponse where
+    parseJSON = withObject "PostSelectedResponse" $ \v -> do
+        postStream <- v .: "post_stream"
+        posts' <- postStream .: "posts"
+        return $ PostSelectedResponse posts'
 
 instance FromJSON Post where
     parseJSON = withObject "Post" $ \v -> do
@@ -140,7 +155,7 @@ instance FromJSON Post where
         -- Some people have the same username as display_username, so just drop
         -- the duplication.
         --
-        n1 <- v .: "display_username"
+        n1 <- v .: "display_username" .!= ""
         n2 <- v .: "username"
         let username' = if n1 == "" || n2 == n1 then n2 else n1 <> " (" <> n2 <> ")"
 
@@ -227,6 +242,13 @@ data PostResponse = PostResponse
   , _postResponseId :: Int
   , _postSlug :: T.Text
   , _postList :: V.Vector Post
+  , _postIds :: V.Vector Int
+  } deriving (Show)
+
+-- We are asking for specific posts
+newtype PostSelectedResponse = PostSelectedResponse
+  {
+    _postSelList :: V.Vector Post
   } deriving (Show)
 
 data Post = Post
@@ -258,6 +280,7 @@ type Slug = T.Text
 makeLenses ''CategoryResponse
 makeLenses ''Post
 makeLenses ''PostResponse
+makeLenses ''PostSelectedResponse
 makeLenses ''Category
 makeLenses ''Poster
 makeLenses ''ProtoTopic
