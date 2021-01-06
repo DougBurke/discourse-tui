@@ -19,7 +19,7 @@ import Control.Monad.IO.Class (liftIO)
 
 import Brick (BrickEvent(..), App(..), EventM, Next, Padding(..), Widget,
               (<=>), (<+>),
-              attrMap, bg, continue, defaultMain,
+              attrMap, continue, defaultMain,
               fg, halt, hBox, hLimit, neverShowCursor,
               padBottom, padLeft, padRight,
               txt, txtWrap, vLimit, withAttr)
@@ -36,7 +36,7 @@ import Data.Maybe (isJust, isNothing)
 import Data.Time (UTCTime, diffUTCTime, getCurrentTime)
 
 import Graphics.Vty.Input.Events (Event(..), Key(..))
-import Graphics.Vty.Attributes (blue, bold, defAttr, green, withStyle, yellow)
+import Graphics.Vty.Attributes (blue, bold, defAttr, green, reverseVideo, withStyle, yellow)
 
 import Network.HTTP.Simple (getResponseBody, httpJSON, parseRequest, setRequestQueryString)
 
@@ -235,7 +235,7 @@ tuiApp :: App TuiState e ResourceName
 tuiApp =
   let attrs = attrMap mempty [ ("title", withStyle defAttr bold)
                              , ("pinned", fg green)
-                             , ("selected", bg yellow)
+                             , ("selected", withStyle defAttr reverseVideo)
                              , ("OP", fg blue)
                              , ("rest", defAttr)
                              , ("bar", fg yellow) ]
