@@ -237,7 +237,8 @@ tuiApp =
 
   in App
      { appDraw = drawTui
-     , appChooseCursor = showFirstCursor
+     -- , appChooseCursor = showFirstCursor
+     , appChooseCursor = neverShowCursor
      , appHandleEvent = handleTuiEvent
      , appStartEvent = pure
      , appAttrMap = const attrs
