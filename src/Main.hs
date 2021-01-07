@@ -21,7 +21,7 @@ import Brick (BrickEvent(..), App(..), EventM, Next, Padding(..), Widget,
               (<=>), (<+>),
               attrMap, continue, defaultMain,
               fg, halt, hBox, hLimit, neverShowCursor,
-              padBottom, padLeft, padRight,
+              padBottom, padLeft, padRight, padTop,
               txt, txtWrap, vLimit, withAttr)
 import Brick.Widgets.Border (border)
 
@@ -108,6 +108,7 @@ getTuiState baseUrl = do
   now <- getCurrentTime
   pure TuiState {
     _currentTime = now,
+    _showHelp = False,
     _topics = topics',
     _posts = Nothing,
     _baseURL = baseUrl',
@@ -124,8 +125,8 @@ helpBar mOrder = withAttr "bar" widget
       Just order -> txt msgFull <+> dirMsg order
       Nothing -> txt msgBase
 
-    msgBase = "arrow keys -> move | left right -> read replies/full post | q to quit"
-    msgFull = "arrow keys -> move | left right -> read replies/full post | s swap order | q to quit"
+    msgBase = "arrow keys -> move | left right -> read replies/full post | h help | q to quit"
+    msgFull = "arrow keys -> move | left right -> read replies/full post | s swap order | h help | q to quit"
 
     dirMsg order = padLeft Max $ txt (showOrder order)
 
@@ -253,10 +254,13 @@ tuiApp =
 -- draws the entire TuiState
 -- this pattern matches the topic list
 drawTui :: TuiState -> [Widget ResourceName]
+
+drawTui tui | tui ^. showHelp = [renderHelp tui]
+
 drawTui tui | isNothing (tui ^. posts) =
   [WL.renderList drawTopic True (tui ^. topics) <=> helpBar Nothing]
     where
-        drawTopic selected (Topic _ category' title lastUpdated likeCount postsCount posters pinned)
+        drawTopic selected tpc@(Topic _ category' _ lastUpdated likeCount _ posters pinned)
                         = border
                         . (if pinned then withAttr "pinned" else id)
                         . padRight Max
@@ -278,7 +282,7 @@ drawTui tui | isNothing (tui ^. posts) =
                          $ likeCount
 
                 title' :: Widget ResourceName
-                title' = withAttr "title" . txt $ title
+                title' = withAttr "title" . txt $ tpc ^. title
 
                 postsCount' :: Widget ResourceName
                 postsCount' = padLeft (Pad 5)
@@ -286,7 +290,7 @@ drawTui tui | isNothing (tui ^. posts) =
                             . ("posts: " <>)
                             . T.pack
                             . show
-                            $ postsCount
+                            $ tpc ^. postsCount
 
                 posters' :: Widget ResourceName
                 posters' = padLeft (Pad 5)
@@ -357,6 +361,32 @@ drawTui tui
                         . padBottom Max
                         . padRight  Max
 
+renderHelp :: TuiState -> Widget ResourceName
+renderHelp tui =
+  let header = "View the discourse for " <> T.pack (tui ^. baseURL)
+
+      -- assume we have to have a selected element
+      ts = tui ^. topics
+      Just tpc = view _2 <$> WL.listSelectedElement ts
+      tstxt = T.intercalate "\n" [ "Selected topic:   " <> (tpc ^. title)
+                                 , "Number of topics: " <> showInt (listLength ts)
+                                 , "Number of posts:  " <> showInt (tpc ^. postsCount)
+                                 , "Sort order:       " <> showOrder (tui ^. timeOrder)
+                                 ]
+
+      help = "Right and left arrows move deeper into, or out of, topics.\n" <>
+             "Up and down arrows move to earlier and later posts (when viewing " <>
+             "a single topic).\n\n" <>
+             "s switches the time order between increasing and decreasing, " <>
+             "which is used for the list of topics and posts views.\n\n" <>
+             "h toggles this page and q exits the program."
+
+  in withAttr "title" (txt header)
+     <=> padTop (Pad 1) (txt tstxt)
+     <=> padTop (Pad 1) (padBottom Max (txtWrap help))
+     <=> withAttr "bar" (txt "h to return | q to quit")
+
+
 -- The post number and the score
 postIdentifier :: Post -> T.Text
 postIdentifier thisPost =
@@ -406,6 +436,11 @@ updateTime tui = do
 
 handleTuiEvent :: TuiState -> BrickEvent ResourceName e -> EventM ResourceName (Next TuiState)
 handleTuiEvent tui (VtyEvent (EvKey (KChar 'q') _)) = halt tui
+
+-- h toggles help
+handleTuiEvent tui (VtyEvent (EvKey (KChar 'h') _)) = do
+  ntui <- liftIO (updateTime tui)
+  continue $ ntui & showHelp .~ not (ntui ^. showHelp)
 
 -- We only change the setting when the posts are listed, not
 -- in all cases.

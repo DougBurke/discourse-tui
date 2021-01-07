@@ -4,6 +4,7 @@
 
 module Types (TuiState(..)
              , currentTime
+             , showHelp
              , topics
              , posts
              , baseURL
@@ -41,6 +42,8 @@ module Types (TuiState(..)
              , PostSelectedResponse
              , postSelList
              , Topic(..)
+             , title
+             , postsCount
              , TopicResponse
              , tpUsers
              , tpTopicList
@@ -267,6 +270,7 @@ data TimeOrder = Decreasing | Increasing
 data TuiState = TuiState
     {
       _currentTime :: UTCTime,
+      _showHelp :: Bool,
       _topics :: List T.Text Topic,
       _posts :: Maybe (Int, Slug, List T.Text Post), -- Nothing if not in post view
       _baseURL :: String,
