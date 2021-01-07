@@ -42,8 +42,13 @@ module Types (TuiState(..)
              , PostSelectedResponse
              , postSelList
              , Topic(..)
+             , category
              , title
+             , lastUpdated
+             , likeCount
              , postsCount
+             , posters
+             , pinned
              , TopicResponse
              , tpUsers
              , tpTopicList
@@ -290,6 +295,6 @@ makeLenses ''Poster
 makeLenses ''ProtoTopic
 makeLenses ''Topic
 makeLenses ''TopicResponse
-makeLenses ''Action
+-- makeLenses ''Action
 makeLenses ''User
 makeLenses ''TuiState

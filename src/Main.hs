@@ -260,16 +260,16 @@ drawTui tui | tui ^. showHelp = [renderHelp tui]
 drawTui tui | isNothing (tui ^. posts) =
   [WL.renderList drawTopic True (tui ^. topics) <=> helpBar Nothing]
     where
-        drawTopic selected tpc@(Topic _ category' _ lastUpdated likeCount _ posters pinned)
-                        = border
-                        . (if pinned then withAttr "pinned" else id)
-                        . padRight Max
-                        $ (likes' <+> title' <+> lastMod) <=>
-                           hBox [category, postsCount', posters']
-            where
+        drawTopic selected tpc
+          = border
+            . (if tpc ^. pinned then withAttr "pinned" else id)
+            . padRight Max
+            $ (likes' <+> title' <+> lastMod) <=>
+            hBox [category', postsCount', posters']
+          where
                 lastMod = padLeft Max
                           . padRight (Pad 1)
-                          $ txt (showTimeDelta (tui ^. currentTime) lastUpdated)
+                          $ txt (showTimeDelta (tui ^. currentTime) (tpc ^. lastUpdated))
 
                 likes' :: Widget ResourceName
                 likes' = (if selected then  withAttr "selected" else id)
@@ -279,7 +279,7 @@ drawTui tui | isNothing (tui ^. posts) =
                          . txt
                          . T.pack
                          . show
-                         $ likeCount
+                         $ tpc ^. likeCount
 
                 title' :: Widget ResourceName
                 title' = withAttr "title" . txt $ tpc ^. title
@@ -297,10 +297,10 @@ drawTui tui | isNothing (tui ^. posts) =
                        . hBox
                        . mapFst (withAttr "OP") (withAttr "rest")
                        . showItems
-                       $ posters
+                       $ tpc ^. posters
 
-                category :: Widget ResourceName
-                category = padLeft (Pad 5) . txt $ category'
+                category' :: Widget ResourceName
+                category' = padLeft (Pad 5) . txt $ tpc ^. category
 
                 -- this could perhaps be re-worked now using Vector
                 showItems :: V.Vector ResourceName -> [Widget ResourceName]
