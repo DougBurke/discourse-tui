@@ -379,6 +379,9 @@ renderHelp tui =
              "a single topic).\n\n" <>
              "s switches the time order between increasing and decreasing, " <>
              "which is used for the list of topics and posts views.\n\n" <>
+             "v will show the selected post, topic, or list of topics " <>
+             "in a web browser (only if the system supports 'gio open', so " <>
+             "just Linux).\n\n" <>
              "h toggles this page and q exits the program."
 
   in withAttr "title" (txt header)
@@ -484,15 +487,14 @@ handleTuiEvent tui (VtyEvent (EvKey (KChar 'v') _)) = do
 handleTuiEvent tui (VtyEvent (EvKey k _)) | tui ^. singlePostView && k `elem` [KUp, KDown]
   = let Just posts' = tui ^. posts
 
-        -- If we didn't want to make up always go bavkwards in time
-        -- then we could check on k.
+        -- If we didn't want to make up always go backwards in time
+        -- then we could just check on k.
         step = case (k, tui ^. timeOrder) of
           (KUp, Increasing) -> -1
           (KDown, Decreasing) -> -1
           _ -> 1
 
         nlist = WL.listMoveBy step (posts' ^. _3)
-
         ntui = tui & posts ?~ (posts' & _3 .~ nlist)
 
     in continue ntui
