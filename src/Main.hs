@@ -122,11 +122,10 @@ helpBar :: Maybe TimeOrder -> Widget ResourceName
 helpBar mOrder = withAttr "bar" widget
   where
     widget = case mOrder of
-      Just order -> txt msgFull <+> dirMsg order
+      Just order -> txt msgBase <+> dirMsg order
       Nothing -> txt msgBase
 
-    msgBase = "arrow keys -> move | left right -> read replies/full post | h help | q to quit"
-    msgFull = "arrow keys -> move | left right -> read replies/full post | s swap order | h help | q to quit"
+    msgBase = "h help | q to quit"
 
     dirMsg order = padLeft Max $ txt (showOrder order)
 
@@ -145,11 +144,7 @@ helpPostBar order cur nposts = withAttr "bar" widget
           Increasing -> cur
           Decreasing -> nposts - cur + 1
 
-    msgBase = "left -> full post | "
-              <> (if nposts == 1
-                  then ""
-                  else "up/down -> previous/next | s swap order | ")
-              <> "q to quit"
+    msgBase = "h help | q to quit"
 
 
 showOrder :: TimeOrder -> T.Text
@@ -384,10 +379,16 @@ renderHelp tui =
              "just Linux).\n\n" <>
              "h toggles this page and q exits the program."
 
+      prev = case tui ^. posts of
+               Nothing -> "topics"
+               Just _ -> if tui ^. singlePostView then "post" else "topic"
+
+      bottomBar = "h to return to " <> prev <> " | q to quit"
+
   in withAttr "title" (txt header)
      <=> padTop (Pad 1) (txt tstxt)
      <=> padTop (Pad 1) (padBottom Max (txtWrap help))
-     <=> withAttr "bar" (txt "h to return | q to quit")
+     <=> withAttr "bar" (txt bottomBar)
 
 
 -- The post number and the score
