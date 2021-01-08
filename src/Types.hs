@@ -83,7 +83,7 @@ instance FromJSON ProtoTopic where
         posters' <- v.: "posters"
         pinned' <- v.: "pinned"
         categoryId' <- v.: "category_id"
-        return $ ProtoTopic topicId' categoryId' title' lastUpdated' likeCount' postsCount' posters' pinned'
+        pure $ ProtoTopic topicId' categoryId' title' lastUpdated' likeCount' postsCount' posters' pinned'
 
 -- TODO: should we replace name by username when name == ""?
 -- Also, on the  nix discourse there's at least one record
@@ -101,7 +101,7 @@ instance FromJSON TopicResponse where
            users' <- v .: "users"
            topicList' <- v .: "topic_list"
            topics' <- topicList' .: "topics"
-           return $ TopicResponse users' topics'
+           pure $ TopicResponse users' topics'
 
 instance FromJSON Poster where
     parseJSON = withObject "Poster" $ \v ->
@@ -128,7 +128,7 @@ instance FromJSON CategoryResponse where
             fake cat cid = Category cid (_categoryName cat <> " [SUB-CATEGORY]") V.empty
             extra' = V.concatMap dup extra
 
-        return $ CategoryResponse $ categories' V.++ extra'
+        pure $ CategoryResponse $ categories' V.++ extra'
 
 -- post_stream.stream is a list of integers of all the items;
 -- these give the id of the individual posts, so we can find the
@@ -144,13 +144,13 @@ instance FromJSON PostResponse where
         slug' <- v .: "slug"
         posts' <- postStream .: "posts"
         postids <- postStream .: "stream"
-        return $ PostResponse chunkSize highestPost id' slug' posts' postids
+        pure $ PostResponse chunkSize highestPost id' slug' posts' postids
 
 instance FromJSON PostSelectedResponse where
     parseJSON = withObject "PostSelectedResponse" $ \v -> do
         postStream <- v .: "post_stream"
         posts' <- postStream .: "posts"
-        return $ PostSelectedResponse posts'
+        pure $ PostSelectedResponse posts'
 
 instance FromJSON Post where
     parseJSON = withObject "Post" $ \v -> do
@@ -170,7 +170,7 @@ instance FromJSON Post where
         createdAt' <- v .: "created_at"
         cooked' <- v .: "cooked"
         actions <- v .: "actions_summary"
-        return $ Post id' postNumber' username' createdAt' cooked' (if null actions then 0 else _count . head $ actions)
+        pure $ Post id' postNumber' username' createdAt' cooked' (if null actions then 0 else _count . head $ actions)
 
 instance FromJSON Action where
     parseJSON = withObject "Action" $ \v ->
