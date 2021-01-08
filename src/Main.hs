@@ -471,7 +471,7 @@ handleTuiEvent tui (VtyEvent (EvKey (KChar 's') _)) = continue tui
 handleTuiEvent tui (VtyEvent (EvKey (KChar 'v') _)) = do
   let frag = case tui ^. posts of
                Just (pid, pslug, plist) ->
-                 let n = case WL.listSelectedElement plist of
+                 let n = case WL.listSelectedElement (orderSelect (tui ^. timeOrder) plist) of
                        Just (_, post) -> post ^. postNumber
                        Nothing -> 1
 
