@@ -363,7 +363,7 @@ renderHelp tui =
       -- assume we have to have a selected element
       ts = tui ^. topics
       Just tpc = view _2 <$> WL.listSelectedElement ts
-      tstxt = T.intercalate "\n" [ "Selected topic:   " <> (tpc ^. title)
+      tstxt = T.intercalate "\n" [ "Selected topic:   " <> tpc ^. title
                                  , "Number of topics: " <> showInt (listLength ts)
                                  , "Number of posts:  " <> showInt (tpc ^. postsCount)
                                  , "Sort order:       " <> showOrder (tui ^. timeOrder)
@@ -505,7 +505,7 @@ handleTuiEvent tui (VtyEvent (EvKey KRight _)) | isJust (tui ^. posts)
   ntui <- liftIO (updateTime tui)
   continue $ ntui & singlePostView .~ not (ntui ^. singlePostView)
 
-handleTuiEvent tui (VtyEvent (EvKey _ _)) | isJust (tui ^. posts) && (tui ^. singlePostView)
+handleTuiEvent tui (VtyEvent (EvKey _ _)) | isJust (tui ^. posts) && tui ^. singlePostView
   = do
   ntui <- liftIO (updateTime tui)
   continue $ ntui & singlePostView .~ False

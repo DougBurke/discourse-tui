@@ -1,0 +1,2 @@
+- arguments: [--ignore-glob=src/*_flymake.hs]
+- warn: {name: Redundant bracket due to operator fixities}
