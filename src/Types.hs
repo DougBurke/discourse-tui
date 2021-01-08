@@ -170,7 +170,10 @@ instance FromJSON Post where
         createdAt' <- v .: "created_at"
         cooked' <- v .: "cooked"
         actions <- v .: "actions_summary"
-        pure $ Post id' postNumber' username' createdAt' cooked' (if null actions then 0 else _count . head $ actions)
+        let count = if null actions
+                    then 0
+                    else _count (V.unsafeHead actions)
+        pure $ Post id' postNumber' username' createdAt' cooked' count
 
 instance FromJSON Action where
     parseJSON = withObject "Action" $ \v ->
