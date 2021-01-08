@@ -7,7 +7,9 @@ let
 
   nixpkgs = import <nixpkgs> {};
 
-  compiler = "ghc8102";
+  # How do I specify "the latest" ghc?
+  # compiler = "ghc";
+  compiler = "ghc8103";
 
   inherit (nixpkgs) pkgs;
 
