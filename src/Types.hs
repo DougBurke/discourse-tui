@@ -34,7 +34,7 @@ module Types (TuiState(..)
              , likes
              , PostResponse
              , postChunkSize
-             , postHighest
+             -- , postHighest
              , postResponseId
              , postSlug
              , postList
@@ -139,12 +139,12 @@ instance FromJSON PostResponse where
         postStream <- v .: "post_stream"
         chunkSize <- v .: "chunk_size"
         -- do we want highest_post_number or posts_count or .. ?
-        highestPost <- v .: "highest_post_number"
+        -- highestPost <- v .: "highest_post_number"
         id' <- v .: "id"
         slug' <- v .: "slug"
         posts' <- postStream .: "posts"
         postids <- postStream .: "stream"
-        pure $ PostResponse chunkSize highestPost id' slug' posts' postids
+        pure $ PostResponse chunkSize id' slug' posts' postids
 
 instance FromJSON PostSelectedResponse where
     parseJSON = withObject "PostSelectedResponse" $ \v -> do
@@ -249,7 +249,7 @@ data Poster = Poster
 data PostResponse = PostResponse
   {
     _postChunkSize :: Int
-  , _postHighest :: Int
+  -- , _postHighest :: Int
   , _postResponseId :: Int
   , _postSlug :: T.Text
   , _postList :: V.Vector Post
