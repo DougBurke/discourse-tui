@@ -26,7 +26,7 @@ import Brick (BrickEvent(..), App(..), EventM, Next, Padding(..), ViewportType(V
 import Brick.Widgets.Border (border)
 
 import Control.Lens (Getting
-                    , (&), (?~), (.~), (^.), _2, _3
+                    , (&), (?~), (.~), (^.), _2
                     , view)
 import Control.Monad (void)
 
@@ -152,13 +152,15 @@ showOrder Increasing = "↑" -- unicode 2191  "+"
 showOrder Decreasing = "↓" -- unicode 2193  "-"
 
 
--- get the posts for the current topic
+-- Get the posts for the current topic. The initial query
+-- uses t/topcid.json which returns the first set of data and
+-- a list of all the posts in the topic. We then set up a
+-- thread to download the remaining data, which will be checked
+-- by handleTuiEvent.
 --
--- For pagination use /t/<id>/posts.json?post_ids[]=n1&post_ids[]=n2...
--- but this returns HTML-encoded, rather than the "markup" style you get
--- from the original set of posts!
---
-getPosts :: TuiState -> IO (Int, Slug, WL.List ResourceName Post)
+getPosts ::
+  TuiState
+  -> IO SingleTopic
 getPosts ts = do
     let Just selectedTopicID = view (_2 . topicId) <$> WL.listSelectedElement (ts ^. topics)
         postURL = mconcat [ts ^. baseURL, "t/", show selectedTopicID, ".json"]
@@ -173,9 +175,9 @@ getPosts ts = do
         extraIds = S.toList (allIds `S.difference` gotIds)
 
     extraPosts <- getExtraPosts extraURL extraIds >>= mapM postToPandoc
-
     let allPosts = basePosts V.++ extraPosts
-    pure (pr ^. postResponseId, pr ^. postSlug, WL.list "posts" allPosts 10)
+
+    pure $ toSingleTopic (pr ^. postResponseId) (pr ^. postSlug) (WL.list "posts" allPosts 10)
 
 
 getExtraPosts :: String -> [Int] -> IO (V.Vector Post)
@@ -308,7 +310,7 @@ drawTui tui | isNothing (tui ^. posts) =
 drawTui tui | tui ^. singlePostView =
   [showSelectedPost (tui ^. currentTime) (tui ^. timeOrder) posts'']
   where
-    Just allPosts = view _3 <$> tui ^. posts  -- must be a Just
+    Just allPosts = view stList <$> tui ^. posts  -- must be a Just
     order = tui ^. timeOrder
 
     -- We need to invert the count if order is Descending.
@@ -323,7 +325,7 @@ drawTui tui | tui ^. singlePostView =
 -- Special case the single-list case so that we jump to display
 -- the post.
 --
-drawTui tui | (listLength . view _3 <$> tui ^. posts) == Just 1
+drawTui tui | (listLength . view stList <$> tui ^. posts) == Just 1
   = let ntui = tui & singlePostView .~ True
     in drawTui ntui
 
@@ -331,7 +333,7 @@ drawTui tui
     = [WL.renderList drawPost True posts'
        <=> helpBar (Just order)]
     where
-        Just allPosts = view _3 <$> tui ^. posts
+        Just allPosts = view stList <$> tui ^. posts
         order = tui ^. timeOrder
         posts' = orderSelect order allPosts
 
@@ -474,12 +476,13 @@ handleTuiEvent tui (VtyEvent (EvKey (KChar 's') _)) = continue tui
 --
 handleTuiEvent tui (VtyEvent (EvKey (KChar 'v') _)) = do
   let frag = case tui ^. posts of
-               Just (pid, pslug, plist) ->
-                 let n = case WL.listSelectedElement (orderSelect (tui ^. timeOrder) plist) of
+               Just stopic ->
+                 let plist = stopic ^. stList
+                     n = case WL.listSelectedElement (orderSelect (tui ^. timeOrder) plist) of
                        Just (_, post) -> post ^. postNumber
                        Nothing -> 1
 
-                 in "t/" <> pslug <> "/" <> showInt pid <>
+                 in "t/" <> stopic ^. stSlug <> "/" <> showInt (stopic ^. stId) <>
                     if tui ^. singlePostView then "/" <> showInt n else ""
                Nothing -> "latest"
 
@@ -499,8 +502,8 @@ handleTuiEvent tui (VtyEvent (EvKey k _)) | tui ^. singlePostView && k `elem` [K
           (KDown, Decreasing) -> -1
           _ -> 1
 
-        nlist = WL.listMoveBy step (posts' ^. _3)
-        ntui = tui & posts ?~ (posts' & _3 .~ nlist)
+        nlist = WL.listMoveBy step (posts' ^. stList)
+        ntui = tui & posts ?~ (posts' & stList .~ nlist)
 
     in continue ntui
 
@@ -530,8 +533,8 @@ handleTuiEvent tui (VtyEvent (EvKey KLeft   _))
 --
 handleTuiEvent tui ev | isJust (tui ^. posts)
   = let Just posts' = tui ^. posts
-        list = posts' ^. _3
-    in scrollHandler (\x -> tui & posts ?~ (posts' & _3 .~ x)) list ev
+        list = posts' ^. stList
+    in scrollHandler (\x -> tui & posts ?~ (posts' & stList .~ x)) list ev
 
 handleTuiEvent tui ev
     = scrollHandler (\x -> tui & topics .~ x) (tui ^. topics) ev

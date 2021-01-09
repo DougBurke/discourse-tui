@@ -55,6 +55,11 @@ module Types (TuiState(..)
              , User
              , userId
              , userName
+             , SingleTopic
+             , toSingleTopic
+             , stId
+             , stSlug
+             , stList
              , TimeOrder(..)
              , ResourceName
              , Slug
@@ -275,12 +280,24 @@ data Post = Post
 data TimeOrder = Decreasing | Increasing
   deriving (Eq, Show)
 
+
+data SingleTopic = SingleTopic
+  {
+    _stId :: Int
+  , _stSlug :: Slug
+  , _stList :: List T.Text Post
+  } deriving (Show)
+
+toSingleTopic :: Int -> Slug -> List T.Text Post -> SingleTopic
+toSingleTopic = SingleTopic
+
+
 data TuiState = TuiState
     {
       _currentTime :: UTCTime,
       _showHelp :: Bool,
       _topics :: List T.Text Topic,
-      _posts :: Maybe (Int, Slug, List T.Text Post), -- Nothing if not in post view
+      _posts :: Maybe SingleTopic, -- Nothing if not in post view
       _baseURL :: String,
       _singlePostView :: Bool, -- if we're looking at the full contents of one post
       _timeOrder :: TimeOrder
@@ -300,4 +317,5 @@ makeLenses ''Topic
 makeLenses ''TopicResponse
 -- makeLenses ''Action
 makeLenses ''User
+makeLenses ''SingleTopic
 makeLenses ''TuiState
