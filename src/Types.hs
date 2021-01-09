@@ -55,11 +55,17 @@ module Types (TuiState(..)
              , User
              , userId
              , userName
+             , ExtraDownload
+             , toExtraDownload
+             , edToDo
+             , edQuery
+             , edTID
              , SingleTopic
              , toSingleTopic
              , stId
              , stSlug
              , stList
+             , stDownload
              , TimeOrder(..)
              , ResourceName
              , Slug
@@ -71,6 +77,8 @@ import qualified Data.Vector as V
 
 import Brick.Widgets.List (List)
 
+import Control.Concurrent (ThreadId)
+import Control.Concurrent.MVar (MVar)
 import Control.Lens
 
 import Data.Aeson (FromJSON, (.:), (.:?), (.!=)
@@ -281,14 +289,24 @@ data TimeOrder = Decreasing | Increasing
   deriving (Eq, Show)
 
 
+data ExtraDownload = ED
+  { _edToDo :: V.Vector Int
+  , _edQuery :: MVar (V.Vector Post)
+  , _edTID :: ThreadId
+  }
+
+toExtraDownload :: V.Vector Int -> MVar (V.Vector Post) -> ThreadId -> ExtraDownload
+toExtraDownload = ED
+
 data SingleTopic = SingleTopic
   {
     _stId :: Int
   , _stSlug :: Slug
   , _stList :: List T.Text Post
-  } deriving (Show)
+  , _stDownload :: Maybe ExtraDownload
+  } -- deriving (Show)
 
-toSingleTopic :: Int -> Slug -> List T.Text Post -> SingleTopic
+toSingleTopic :: Int -> Slug -> List T.Text Post -> Maybe ExtraDownload -> SingleTopic
 toSingleTopic = SingleTopic
 
 
@@ -301,7 +319,7 @@ data TuiState = TuiState
       _baseURL :: String,
       _singlePostView :: Bool, -- if we're looking at the full contents of one post
       _timeOrder :: TimeOrder
-    } deriving (Show)
+    } -- deriving (Show)
 
 type ResourceName = T.Text
 type Slug = T.Text
@@ -317,5 +335,6 @@ makeLenses ''Topic
 makeLenses ''TopicResponse
 -- makeLenses ''Action
 makeLenses ''User
+makeLenses ''ExtraDownload
 makeLenses ''SingleTopic
 makeLenses ''TuiState

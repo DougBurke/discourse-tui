@@ -15,23 +15,25 @@ import qualified Data.Vector as V
 import qualified Formatting as F
 import qualified Formatting.Time as FT
 
-import Control.Monad.IO.Class (liftIO)
-
 import Brick (BrickEvent(..), App(..), EventM, Next, Padding(..), ViewportType(Vertical), Widget,
               (<=>), (<+>),
               attrMap, continue, defaultMain,
-              fg, halt, hBox, hLimit, neverShowCursor,
+              fg, halt, hBox, hLimit,
+              neverShowCursor,
               padBottom, padLeft, padRight, padTop,
               txt, txtWrap, viewport, vLimit, withAttr)
 import Brick.Widgets.Border (border)
+import Brick.Widgets.Center (hCenter)
 
+import Control.Concurrent (forkIO, killThread)
+import Control.Concurrent.MVar (isEmptyMVar, newEmptyMVar, putMVar, tryTakeMVar)
+import Control.Exception (evaluate)
 import Control.Lens (Getting
                     , (&), (?~), (.~), (^.), _2
                     , view)
-import Control.Monad (void)
+import Control.Monad (unless, void)
+import Control.Monad.IO.Class (liftIO)
 
-import Data.Functor ((<&>))
-import Data.List.Split (chunksOf)
 import Data.Maybe (isJust, isNothing)
 import Data.Time (UTCTime, diffUTCTime, getCurrentTime)
 
@@ -118,16 +120,21 @@ getTuiState baseUrl = do
 
 -- The help bar at the bottom, for most pages.
 --
-helpBar :: Maybe TimeOrder -> Widget ResourceName
-helpBar mOrder = withAttr "bar" widget
+helpBase :: T.Text
+helpBase = "h help | q to quit"
+
+helpBar :: Maybe TimeOrder -> Bool -> Widget ResourceName
+helpBar Nothing _ = withAttr "bar" (txt helpBase)
+helpBar (Just order) True = withAttr "bar" widget
   where
-    widget = case mOrder of
-      Just order -> txt msgBase <+> dirMsg order
-      Nothing -> txt msgBase
+    widget = txt helpBase <+> downloading <+> dirMsg
+    dirMsg = padLeft Max $ txt (showOrder order)
+    downloading = hCenter (txt "... downloading ...")
 
-    msgBase = "h help | q to quit"
-
-    dirMsg order = padLeft Max $ txt (showOrder order)
+helpBar (Just order) False = withAttr "bar" widget
+  where
+    widget = txt helpBase <+> dirMsg
+    dirMsg = padLeft Max $ txt (showOrder order)
 
 -- The help bar for the single-post page
 helpPostBar :: TimeOrder -> Int -> Int -> Widget ResourceName
@@ -172,28 +179,32 @@ getPosts ts = do
 
     let allIds = S.fromList . V.toList $ pr ^. postIds
         gotIds = S.fromList . V.toList . V.map (^. postId) $ pr ^. postList
-        extraIds = S.toList (allIds `S.difference` gotIds)
+        extraIds = V.fromList . S.toAscList $ allIds `S.difference` gotIds
 
-    extraPosts <- getExtraPosts extraURL extraIds >>= mapM postToPandoc
-    let allPosts = basePosts V.++ extraPosts
-
-    pure $ toSingleTopic (pr ^. postResponseId) (pr ^. postSlug) (WL.list "posts" allPosts 10)
+    mExtra <- getExtraPosts extraURL extraIds
+    pure $ toSingleTopic (pr ^. postResponseId) (pr ^. postSlug) (WL.list "posts" basePosts 10) mExtra
 
 
-getExtraPosts :: String -> [Int] -> IO (V.Vector Post)
-getExtraPosts _ [] = pure V.empty
-getExtraPosts baseUrl ids =
-  let chunks = chunksOf 20 ids
+getExtraPosts :: String -> V.Vector Int -> IO (Maybe ExtraDownload)
+getExtraPosts _ ids | V.null ids = pure Nothing
+getExtraPosts baseUrl ids = do
+  let (now, later) = V.splitAt 20 ids
 
-      getChunks xs = do
-        let qry = map (\x -> ("post_ids[]", toN x)) xs
+      getChunk xs = do
+        let qry = map (\x -> ("post_ids[]", toN x)) (V.toList xs)
             toN = Just . B.pack . show
         req <- parseRequest baseUrl
         let req' = setRequestQueryString qry req
         rsp <- getResponseBody <$> httpJSON req'
         pure (rsp ^. postSelList)
 
-  in mapM getChunks chunks <&> V.concat
+  mvar <- newEmptyMVar
+  tid <- forkIO $ do
+    posts' <- getChunk now >>= mapM postToPandoc >>= evaluate
+    putMVar mvar posts'
+
+  pure . Just $ toExtraDownload later mvar tid
+
 
 postToPandoc :: Post -> IO Post
 postToPandoc post = do
@@ -255,7 +266,7 @@ drawTui :: TuiState -> [Widget ResourceName]
 drawTui tui | tui ^. showHelp = [renderHelp tui]
 
 drawTui tui | isNothing (tui ^. posts) =
-  [WL.renderList drawTopic True (tui ^. topics) <=> helpBar Nothing]
+  [WL.renderList drawTopic True (tui ^. topics) <=> helpBar Nothing False]
     where
         drawTopic selected tpc
           = border
@@ -331,9 +342,10 @@ drawTui tui | (listLength . view stList <$> tui ^. posts) == Just 1
 
 drawTui tui
     = [WL.renderList drawPost True posts'
-       <=> helpBar (Just order)]
+       <=> helpBar (Just order) (isJust (st ^. stDownload))]
     where
-        Just allPosts = view stList <$> tui ^. posts
+        Just st = tui ^. posts
+        allPosts = st ^. stList
         order = tui ^. timeOrder
         posts' = orderSelect order allPosts
 
@@ -444,8 +456,53 @@ updateTime tui = do
   pure $ tui & currentTime .~ now
 
 
+-- Are we downloading more posts?
+isDownloading :: TuiState -> Bool
+isDownloading tui =
+  case tui ^. posts of
+    Nothing -> False
+    Just st -> isJust (st ^. stDownload)
+
+
+addToList :: WL.List n e -> V.Vector e -> WL.List n e
+addToList olist xs =
+  let osel = WL.listSelected olist
+      nelems = WL.listElements olist V.++ xs
+
+  in WL.listReplace nelems osel olist
+
+
 handleTuiEvent :: TuiState -> BrickEvent ResourceName e -> EventM ResourceName (Next TuiState)
 handleTuiEvent tui (VtyEvent (EvKey (KChar 'q') _)) = halt tui
+
+-- Do we have any downloading to process?
+-- We need to kill any downloads if we are moving back to the topic list
+--
+handleTuiEvent tui e | isDownloading tui = do
+  let Just st = tui ^. posts
+      Just ed = st ^. stDownload
+
+  -- Have we downloaded the data yet?
+  --
+  rsp <- liftIO (tryTakeMVar (ed ^. edQuery))
+  ntui <- case rsp of
+    Nothing -> pure tui
+    Just nposts -> do
+
+      -- Recreating the URL is not great; we should have set up a constructor to
+      -- hide this logic.
+      --
+      let Just selectedTopicID = view (_2 . topicId) <$> WL.listSelectedElement (tui ^. topics)
+          extraURL = mconcat [tui ^. baseURL, "t/", show selectedTopicID, "/posts.json"]
+      ned <- liftIO (getExtraPosts extraURL (ed ^. edToDo))
+
+      let nlist = addToList (st ^. stList) nposts
+          nst = st & stList .~ nlist & stDownload .~ ned
+
+      pure $ tui & posts ?~ nst
+
+  handleTuiEvent ntui e
+
 
 -- h toggles help
 handleTuiEvent tui (VtyEvent (EvKey (KChar 'h') _)) = do
@@ -524,6 +581,22 @@ handleTuiEvent tui (VtyEvent (EvKey KRight  _)) = do
 
 handleTuiEvent tui (VtyEvent (EvKey KLeft   _))
     = do
+
+  -- Need to handle an error when killing the thread (maybe it has
+  -- finished). Also only need to do if the mvar is not empty, but
+  -- that could also change duringprocessing so still need the error
+  -- handling.
+  --
+  -- How can this be lensified?
+  --
+  case tui ^. posts of
+    Nothing -> pure()
+    Just posts' -> case posts' ^. stDownload of
+      Nothing -> pure ()
+      Just dl -> do
+        flag <- liftIO (isEmptyMVar (dl ^. edQuery))
+        unless flag $ liftIO (killThread (dl ^. edTID))
+
   ntui <- liftIO (updateTime tui)
   continue $ ntui & posts .~ Nothing
 
