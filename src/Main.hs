@@ -17,12 +17,12 @@ import qualified Formatting.Time as FT
 
 import Control.Monad.IO.Class (liftIO)
 
-import Brick (BrickEvent(..), App(..), EventM, Next, Padding(..), Widget,
+import Brick (BrickEvent(..), App(..), EventM, Next, Padding(..), ViewportType(Vertical), Widget,
               (<=>), (<+>),
               attrMap, continue, defaultMain,
               fg, halt, hBox, hLimit, neverShowCursor,
               padBottom, padLeft, padRight, padTop,
-              txt, txtWrap, vLimit, withAttr)
+              txt, txtWrap, viewport, vLimit, withAttr)
 import Brick.Widgets.Border (border)
 
 import Control.Lens (Getting
@@ -406,8 +406,12 @@ showSelectedPost tNow order allPosts =
 
           nPosts = listLength allPosts
 
+          -- How do we scroll this? Need to call vScrollBy and family
+          contents' = viewport "SinglePostView" Vertical (txtWrap $ thisPost ^. contents)
+          -- contents' = txtWrap $ thisPost ^. contents
+
       in withAttr "OP" topBar
-         <=> padBottom Max (txt $ thisPost ^. contents)
+         <=> padBottom Max contents'
          <=> helpPostBar order (ctr + 1) nPosts
 
     Nothing -> txt "something went wrong"
