@@ -34,6 +34,7 @@ import Control.Lens (Getting
 import Control.Monad (unless, void)
 import Control.Monad.IO.Class (liftIO)
 
+import Data.List (intercalate)
 import Data.Maybe (isJust, isNothing)
 import Data.Time (UTCTime, diffUTCTime, getCurrentTime)
 
@@ -69,14 +70,25 @@ parseTopic userMap catagoryMap pt
             }
 
 helpMessage :: String
-helpMessage = "Usage: discourse-tui url \n Ex: discourse-tui https://discourse.haskell.org"
+helpMessage = intercalate "\n"
+  [ "Usage: discourse-tui url|fragment"
+  , ""
+  , "where fragment (no . character) is taken to mean https://discource.fragment.org,"
+  , "or the full URL is given. So either:"
+  , ""
+  , "     discource-tui haskell"
+  , "     discourse-tui https://discourse.haskell.org"
+  ]
 
 parseArgs :: IO String
 parseArgs = do
     args <- getArgs
-    if null args || head args == "--help"
-        then die helpMessage
-        else pure $ head args
+    case args of
+      [x] | x /= "--help" -> pure $ if '.' `elem` x
+                                    then x
+                                    else "https://discourse." ++ x ++ ".org"
+      _ -> die helpMessage
+
 
 main :: IO ()
 main = do
