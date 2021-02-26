@@ -9,7 +9,7 @@ let
 
   # How do I specify "the latest" ghc?
   # compiler = "ghc";
-  compiler = "ghc8103";
+  compiler = "ghc8104";
 
   inherit (nixpkgs) pkgs;
 
