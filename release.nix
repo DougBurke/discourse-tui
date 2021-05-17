@@ -21,6 +21,10 @@ let
       "discourse-tui" =
         hself.callCabal2nix "discourse-tui" (gitignore ./.) {};
 
+      # version 7.1 appers not to be in nixpkgs?
+      formatting =
+        hself.callHackage "formatting" "7.1.2" {};
+
       #validity =
       #  hself.callHackage "validity" "0.8.0.0" {};
 

@@ -69,7 +69,7 @@ executable discourse-tui
                        text,
                        lens,
                        bytestring == 0.10.*,
-                       formatting == 7.1.*,
+                       formatting >= 7.1 && < 7.3,
                        process == 1.6.*,
                        time == 1.9.*
 
