@@ -1,0 +1,7 @@
+cradle:
+  cabal:
+    - path: "src/Main.hs"
+      component: "discourse-tui:exe:discourse-tui"
+
+    - path: "src/Types.hs"
+      component: "discourse-tui:exe:discourse-tui"
