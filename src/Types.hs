@@ -67,7 +67,7 @@ module Types (TuiState(..)
              , stList
              , stDownload
              , TimeOrder(..)
-             , ResourceName
+             , ResourceName(..)
              , Slug
              , topicHeight
              ) where
@@ -84,6 +84,12 @@ import Control.Lens
 import Data.Aeson (FromJSON, (.:), (.:?), (.!=)
                   , parseJSON, withObject)
 import Data.Time (UTCTime)
+
+
+-- Labels for the UI
+--
+data ResourceName = Contents | Posts | SinglePostView
+  deriving (Eq, Ord, Show)
 
 
 instance FromJSON ProtoTopic where
@@ -302,11 +308,11 @@ data SingleTopic = SingleTopic
   {
     _stId :: Int
   , _stSlug :: Slug
-  , _stList :: List T.Text Post
+  , _stList :: List ResourceName Post
   , _stDownload :: Maybe ExtraDownload
   } -- deriving (Show)
 
-toSingleTopic :: Int -> Slug -> List T.Text Post -> Maybe ExtraDownload -> SingleTopic
+toSingleTopic :: Int -> Slug -> List ResourceName Post -> Maybe ExtraDownload -> SingleTopic
 toSingleTopic = SingleTopic
 
 
@@ -314,14 +320,13 @@ data TuiState = TuiState
     {
       _currentTime :: UTCTime,
       _showHelp :: Bool,
-      _topics :: List T.Text Topic,
+      _topics :: List ResourceName Topic,
       _posts :: Maybe SingleTopic, -- Nothing if not in post view
       _baseURL :: String,
       _singlePostView :: Bool, -- if we're looking at the full contents of one post
       _timeOrder :: TimeOrder
     } -- deriving (Show)
 
-type ResourceName = T.Text
 type Slug = T.Text
 
 makeLenses ''CategoryResponse

@@ -16,12 +16,16 @@ import qualified Formatting as F
 import qualified Formatting.Time as FT
 
 import Brick (BrickEvent(..), App(..), EventM, Next, Padding(..), ViewportType(Vertical), Widget,
+              Direction(..),
               (<=>), (<+>),
               attrMap, continue, defaultMain,
               fg, halt, hBox, hLimit,
               neverShowCursor,
               padBottom, padLeft, padRight, padTop,
-              txt, txtWrap, viewport, vLimit, withAttr)
+              txt, txtWrap,
+              viewport, viewportScroll,
+              vScrollBy, vScrollToBeginning, vScrollToEnd, vScrollPage,
+              vLimit, withAttr)
 import Brick.Widgets.Border (border)
 import Brick.Widgets.Center (hCenter)
 
@@ -38,7 +42,7 @@ import Data.List (intercalate)
 import Data.Maybe (isJust, isNothing)
 import Data.Time (UTCTime, diffUTCTime, getCurrentTime)
 
-import Graphics.Vty.Input.Events (Event(..), Key(..))
+import Graphics.Vty.Input.Events (Event(..), Key(..), Modifier(MShift))
 import Graphics.Vty.Attributes (blue, bold, defAttr, green, reverseVideo, withStyle, yellow)
 
 import Network.HTTP.Simple (getResponseBody, httpJSON, parseRequest, setRequestQueryString)
@@ -117,7 +121,7 @@ getTuiState baseUrl = do
       categoryMap = tokenize categoryId $ categoriesResp ^. categories
 
       widgetList = V.map (parseTopic userMap categoryMap) topicList
-      topics' = WL.list "contents" widgetList topicHeight
+      topics' = WL.list Contents widgetList topicHeight
 
   now <- getCurrentTime
   pure TuiState {
@@ -194,7 +198,7 @@ getPosts ts = do
         extraIds = V.fromList . S.toAscList $ allIds `S.difference` gotIds
 
     mExtra <- getExtraPosts extraURL extraIds
-    pure $ toSingleTopic (pr ^. postResponseId) (pr ^. postSlug) (WL.list "posts" basePosts 10) mExtra
+    pure $ toSingleTopic (pr ^. postResponseId) (pr ^. postSlug) (WL.list Posts basePosts 10) mExtra
 
 
 getExtraPosts :: String -> V.Vector Int -> IO (Maybe ExtraDownload)
@@ -323,7 +327,7 @@ drawTui tui | isNothing (tui ^. posts) =
                 category' = padLeft (Pad 5) . txt $ tpc ^. category
 
                 -- this could perhaps be re-worked now using Vector
-                showItems :: V.Vector ResourceName -> [Widget ResourceName]
+                showItems :: V.Vector T.Text -> [Widget ResourceName]
                 showItems v = map txt . V.toList $ (V.map (<> " ") . V.init $ v) V.++ V.singleton (V.last v)
 
 -- We have checked for the topic list, so we are now
@@ -396,8 +400,8 @@ renderHelp tui =
                                  ]
 
       help = "Right and left arrows move deeper into, or out of, topics.\n" <>
-             "Up and down arrows move to earlier and later posts (when viewing " <>
-             "a single topic).\n\n" <>
+             "Up and down arrows move to earlier and later posts when viewing " <>
+             "a single topic; shift + up/down scrolls a single post.\n\n" <>
              "s switches the time order between increasing and decreasing, " <>
              "which is used for the list of topics and posts views.\n\n" <>
              "v will show the selected post, topic, or list of topics " <>
@@ -422,7 +426,8 @@ postIdentifier :: Post -> T.Text
 postIdentifier thisPost =
   showInt (thisPost ^. postNumber) <> ":" <> showInt (thisPost ^. likes)
 
-showSelectedPost :: UTCTime -> TimeOrder -> WL.List n Post -> Widget ResourceName
+
+showSelectedPost :: UTCTime -> TimeOrder -> WL.List ResourceName Post -> Widget ResourceName
 showSelectedPost tNow order allPosts =
   case WL.listSelectedElement allPosts of
     (Just (ctr, thisPost)) ->
@@ -432,9 +437,11 @@ showSelectedPost tNow order allPosts =
 
           nPosts = listLength allPosts
 
-          -- How do we scroll this? Need to call vScrollBy and family
-          contents' = viewport "SinglePostView" Vertical (txtWrap $ thisPost ^. contents)
-          -- contents' = txtWrap $ thisPost ^. contents
+          -- Make the contents scrollable vertically.
+          -- Can we identify when the contents exceed the viewport
+          -- so we can add some decoration?
+          --
+          contents' = viewport SinglePostView Vertical (txtWrap $ thisPost ^. contents)
 
       in withAttr "OP" topBar
          <=> padBottom Max contents'
@@ -451,7 +458,7 @@ showTimeDelta ::
   -- ^ The current time
   -> UTCTime
   -- ^ A time in the past
-  -> ResourceName
+  -> T.Text
 showTimeDelta now old =
   let dt = diffUTCTime old now
   in LT.toStrict (F.format (FT.diff True) dt)
@@ -558,9 +565,30 @@ handleTuiEvent tui (VtyEvent (EvKey (KChar 'v') _)) = do
   liftIO (showPage (tui ^. baseURL) frag)
   continue tui
 
--- up/down key presses on the single-page view will scroll through the
--- replies. up maps to previous, down to next whatever the search order.
+-- Handle movement in the single-post view:
+--  - do we move within the page (up/down, pgup,pgdown, home./end)
+--  - do we move to the next or previous posts?
 --
+-- We could be clever but instead 'cheat' and use the shift key to indicate
+-- the shifts are *within* the page and no-specifier (well, technically
+-- all other ones) to indicate between posts
+--
+handleTuiEvent tui (VtyEvent (EvKey k [MShift])) | tui ^. singlePostView
+  = let vp = viewportScroll SinglePostView
+
+        op = case k of
+          KUp -> vScrollBy vp (-1)
+          KDown -> vScrollBy vp 1
+          -- gargh - not getting the following to work ...
+          KPageUp -> vScrollPage vp Up
+          KPageDown -> vScrollPage vp Down
+          KHome -> vScrollToBeginning vp
+          KEnd -> vScrollToEnd vp
+          _ -> pure ()
+        
+    in op >> continue tui
+       
+
 handleTuiEvent tui (VtyEvent (EvKey k _)) | tui ^. singlePostView && k `elem` [KUp, KDown]
   = let Just posts' = tui ^. posts
 
@@ -575,6 +603,7 @@ handleTuiEvent tui (VtyEvent (EvKey k _)) | tui ^. singlePostView && k `elem` [K
         ntui = tui & posts ?~ (posts' & stList .~ nlist)
 
     in continue ntui
+
 
 handleTuiEvent tui (VtyEvent (EvKey KRight _)) | isJust (tui ^. posts)
   = do
