@@ -19,14 +19,17 @@ import Brick (BrickEvent(..), App(..), EventM, Next, Padding(..), ViewportType(V
               Direction(..),
               (<=>), (<+>),
               attrMap, continue, defaultMain,
-              fg, halt, hBox, hLimit,
+              fg,
+              halt, hBox, hLimit,
               neverShowCursor,
               padBottom, padLeft, padRight, padTop,
               txt, txtWrap,
               viewport, viewportScroll,
               vScrollBy, vScrollToBeginning, vScrollToEnd, vScrollPage,
-              vLimit, withAttr)
+              vLimit,
+              withAttr, withBorderStyle)
 import Brick.Widgets.Border (border)
+import Brick.Widgets.Border.Style (unicodeRounded)
 import Brick.Widgets.Center (hCenter)
 
 import Control.Concurrent (forkIO, killThread)
@@ -285,7 +288,8 @@ drawTui tui | isNothing (tui ^. posts) =
   [WL.renderList drawTopic True (tui ^. topics) <=> helpBar Nothing False]
     where
         drawTopic selected tpc
-          = border
+          = withBorderStyle unicodeRounded
+            . border
             . (if tpc ^. pinned then withAttr "pinned" else id)
             . padRight Max
             $ (likes' <+> title' <+> lastMod) <=>
@@ -296,7 +300,7 @@ drawTui tui | isNothing (tui ^. posts) =
                           $ txt (showTimeDelta (tui ^. currentTime) (tpc ^. lastUpdated))
 
                 likes' :: Widget ResourceName
-                likes' = (if selected then  withAttr "selected" else id)
+                likes' = (if selected then withAttr "selected" else id)
                          . padRight (Pad 1)
                          . hLimit 4
                          . padRight Max
@@ -381,10 +385,11 @@ drawTui tui
                           . padRight (Pad 1)
                           $ txt (showTimeDelta (tui ^. currentTime) (post ^. opCreatedAt))
                 contents' = txtWrap (post ^. contents)
-                border' = border
-                        . vLimit 8
-                        . padBottom Max
-                        . padRight  Max
+                border' = withBorderStyle unicodeRounded
+                          . border
+                          . vLimit 8
+                          . padBottom Max
+                          . padRight  Max
 
 renderHelp :: TuiState -> Widget ResourceName
 renderHelp tui =
