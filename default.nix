@@ -1,1 +1,1 @@
-(import ./release.nix).exe
+(import ./release.nix {}).exe
