@@ -42,7 +42,7 @@ import Control.Monad (unless, void)
 import Control.Monad.IO.Class (liftIO)
 
 import Data.List (intercalate)
-import Data.Maybe (isJust, isNothing)
+import Data.Maybe (isJust)
 import Data.Time (UTCTime, diffUTCTime, getCurrentTime)
 
 import Graphics.Vty.Input.Events (Event(..), Key(..), Modifier(MShift))
@@ -128,13 +128,12 @@ getTuiState baseUrl = do
 
   now <- getCurrentTime
   pure TuiState {
-    _currentTime = now,
-    _showHelp = False,
-    _topics = topics',
-    _posts = Nothing,
-    _baseURL = baseUrl',
-    _singlePostView = False,
-    _timeOrder = Increasing
+    _currentTime = now
+    , _topics = topics'
+    , _posts = Nothing
+    , _baseURL = baseUrl'
+    , _timeOrder = Increasing
+    , _displayState = initDisplayState
     }
 
 -- The help bar at the bottom, for most pages.
@@ -200,8 +199,10 @@ getPosts ts = do
         gotIds = S.fromList . V.toList . V.map (^. postId) $ pr ^. postList
         extraIds = V.fromList . S.toAscList $ allIds `S.difference` gotIds
 
+        nposts = V.length (pr ^. postIds)
+
     mExtra <- getExtraPosts extraURL extraIds
-    pure $ toSingleTopic (pr ^. postResponseId) (pr ^. postSlug) (WL.list Posts basePosts 10) mExtra
+    pure $ toSingleTopic (pr ^. postResponseId) nposts (pr ^. postSlug) (WL.list Posts basePosts 10) mExtra
 
 
 getExtraPosts :: String -> V.Vector Int -> IO (Maybe ExtraDownload)
@@ -279,12 +280,17 @@ tuiApp =
 
 
 -- draws the entire TuiState
--- this pattern matches the topic list
 drawTui :: TuiState -> [Widget ResourceName]
+drawTui tui =
+  case getDisplayState (tui ^. displayState) of
+    DisplayAllTopics -> displayAllTopics tui
+    DisplayTopic -> displayTopic tui
+    DisplayPost -> displayPost tui
+    DisplayHelp -> displayHelp tui
 
-drawTui tui | tui ^. showHelp = [renderHelp tui]
 
-drawTui tui | isNothing (tui ^. posts) =
+displayAllTopics :: TuiState -> [Widget ResourceName]
+displayAllTopics tui =
   [WL.renderList drawTopic True (tui ^. topics) <=> helpBar Nothing False]
     where
         drawTopic selected tpc
@@ -334,35 +340,21 @@ drawTui tui | isNothing (tui ^. posts) =
                 showItems :: V.Vector T.Text -> [Widget ResourceName]
                 showItems v = map txt . V.toList $ (V.map (<> " ") . V.init $ v) V.++ V.singleton (V.last v)
 
--- We have checked for the topic list, so we are now
--- showing a topic. The issue is whether we are showing a single
--- post or not.
---
-drawTui tui | tui ^. singlePostView =
-  [showSelectedPost (tui ^. currentTime) (tui ^. timeOrder) posts'']
-  where
-    Just allPosts = view stList <$> tui ^. posts  -- must be a Just
-    order = tui ^. timeOrder
 
-    -- We need to invert the count if order is Descending.
-    --
-    posts' = WL.listReverse allPosts
-    posts'' = case order of
-      Increasing -> allPosts
-      Decreasing -> case WL.listSelected allPosts of
-        Just cPos -> WL.listMoveTo cPos posts'
-        Nothing -> posts'
+displayTopic :: TuiState -> [Widget ResourceName]
+displayTopic tui = [renderTopic tui]
 
--- Special case the single-list case so that we jump to display
--- the post.
---
-drawTui tui | (listLength . view stList <$> tui ^. posts) == Just 1
-  = let ntui = tui & singlePostView .~ True
-    in drawTui ntui
+displayPost :: TuiState -> [Widget ResourceName]
+displayPost tui = [renderPost tui]
 
-drawTui tui
-    = [WL.renderList drawPost True posts'
-       <=> helpBar (Just order) (isJust (st ^. stDownload))]
+displayHelp :: TuiState -> [Widget ResourceName]
+displayHelp tui = [renderHelp tui]
+
+
+renderTopic :: TuiState -> Widget ResourceName
+renderTopic tui
+    = WL.renderList drawPost True posts'
+      <=> helpBar (Just order) (isJust (st ^. stDownload))
     where
         Just st = tui ^. posts
         allPosts = st ^. stList
@@ -391,45 +383,21 @@ drawTui tui
                           . padBottom Max
                           . padRight  Max
 
-renderHelp :: TuiState -> Widget ResourceName
-renderHelp tui =
-  let header = "View the discourse for " <> T.pack (tui ^. baseURL)
 
-      -- assume we have to have a selected element
-      ts = tui ^. topics
-      Just tpc = view _2 <$> WL.listSelectedElement ts
-      tstxt = T.intercalate "\n" [ "Selected topic:   " <> tpc ^. title
-                                 , "Number of topics: " <> showInt (listLength ts)
-                                 , "Number of posts:  " <> showInt (tpc ^. postsCount)
-                                 , "Sort order:       " <> showOrder (tui ^. timeOrder)
-                                 ]
+renderPost :: TuiState -> Widget ResourceName
+renderPost tui = showSelectedPost (tui ^. currentTime) order posts''
+  where
+    Just allPosts = view stList <$> tui ^. posts  -- must be a Just
+    order = tui ^. timeOrder
 
-      help = "Right and left arrows move deeper into, or out of, topics.\n" <>
-             "Up and down arrows move to earlier and later posts when viewing " <>
-             "a single topic; shift + up/down scrolls a single post.\n\n" <>
-             "s switches the time order between increasing and decreasing, " <>
-             "which is used for the list of topics and posts views.\n\n" <>
-             "v will show the selected post, topic, or list of topics " <>
-             "in a web browser (only if the system supports 'gio open', so " <>
-             "just Linux).\n\n" <>
-             "h toggles this page and q exits the program."
-
-      prev = case tui ^. posts of
-               Nothing -> "topics"
-               Just _ -> if tui ^. singlePostView then "post" else "topic"
-
-      bottomBar = "h to return to " <> prev <> " | q to quit"
-
-  in withAttr "title" (txt header)
-     <=> padTop (Pad 1) (txt tstxt)
-     <=> padTop (Pad 1) (padBottom Max (txtWrap help))
-     <=> withAttr "bar" (txt bottomBar)
-
-
--- The post number and the score
-postIdentifier :: Post -> T.Text
-postIdentifier thisPost =
-  showInt (thisPost ^. postNumber) <> ":" <> showInt (thisPost ^. likes)
+    -- We need to invert the count if order is Descending.
+    --
+    posts' = WL.listReverse allPosts
+    posts'' = case order of
+      Increasing -> allPosts
+      Decreasing -> case WL.listSelected allPosts of
+        Just cPos -> WL.listMoveTo cPos posts'
+        Nothing -> posts'
 
 
 showSelectedPost :: UTCTime -> TimeOrder -> WL.List ResourceName Post -> Widget ResourceName
@@ -453,6 +421,50 @@ showSelectedPost tNow order allPosts =
          <=> helpPostBar order (ctr + 1) nPosts
 
     Nothing -> txt "something went wrong"
+
+
+renderHelp :: TuiState -> Widget ResourceName
+renderHelp tui =
+  let header = "View the discourse for " <> T.pack (tui ^. baseURL)
+
+      -- assume we have to have a selected element
+      ts = tui ^. topics
+      Just tpc = view _2 <$> WL.listSelectedElement ts
+      tstxt = T.intercalate "\n" [ "Selected topic:   " <> tpc ^. title
+                                 , "Number of topics: " <> showInt (listLength ts)
+                                 , "Number of posts:  " <> showInt (tpc ^. postsCount)
+                                 , "Sort order:       " <> showOrder (tui ^. timeOrder)
+                                 ]
+
+      help = "Right and left arrows move deeper into, or out of, topics.\n" <>
+             "Up and down arrows move to earlier and later posts when viewing " <>
+             "a single topic; shift + up/down scrolls a single post.\n\n" <>
+             "s switches the time order between increasing and decreasing, " <>
+             "which is used for the list of topics and posts views.\n\n" <>
+             "v will show the selected post, topic, or list of topics " <>
+             "in a web browser (only if the system supports 'gio open', so " <>
+             "just Linux).\n\n" <>
+             "h toggles this page and q exits the program."
+
+      prev = case getPreviousDisplayState (tui ^. displayState) of
+               Just DisplayPost -> "post"
+               Just DisplayTopic -> "topic"
+               Just DisplayAllTopics -> "topics"
+               Just DisplayHelp -> "help"  -- should not occur
+               Nothing -> "help" -- should not occur
+
+      bottomBar = "h to return to " <> prev <> " | q to quit"
+
+  in withAttr "title" (txt header)
+     <=> padTop (Pad 1) (txt tstxt)
+     <=> padTop (Pad 1) (padBottom Max (txtWrap help))
+     <=> withAttr "bar" (txt bottomBar)
+
+
+-- The post number and the score
+postIdentifier :: Post -> T.Text
+postIdentifier thisPost =
+  showInt (thisPost ^. postNumber) <> ":" <> showInt (thisPost ^. likes)
 
 
 showInt :: Int -> T.Text
@@ -499,8 +511,11 @@ addToList olist xs =
 handleTuiEvent :: TuiState -> BrickEvent ResourceName e -> EventM ResourceName (Next TuiState)
 handleTuiEvent tui (VtyEvent (EvKey (KChar 'q') _)) = halt tui
 
+
 -- Do we have any downloading to process?
 -- We need to kill any downloads if we are moving back to the topic list
+--
+-- It would be cleaner to just hold the TUI until the download has happened.
 --
 handleTuiEvent tui e | isDownloading tui = do
   let Just st = tui ^. posts
@@ -531,22 +546,28 @@ handleTuiEvent tui e | isDownloading tui = do
 -- h toggles help
 handleTuiEvent tui (VtyEvent (EvKey (KChar 'h') _)) = do
   ntui <- liftIO (updateTime tui)
-  continue $ ntui & showHelp .~ not (ntui ^. showHelp)
+
+  let ostates = ntui ^. displayState
+      Just nstates = updateDisplayState ostates DisplayHelp
+
+  let ntui' = ntui & displayState .~ nstates
+  continue ntui'
+
 
 -- We only change the setting when the posts are listed, not
 -- in all cases.
--- handleTuiEvent tui (VtyEvent (EvKey (KChar 's') _)) =
-handleTuiEvent tui (VtyEvent (EvKey (KChar 's') _)) | isJust (tui ^. posts) && not (tui ^. singlePostView) =
+--
+handleTuiEvent tui (VtyEvent (EvKey (KChar 's') _)) =
   let new = case tui ^. timeOrder of
               Decreasing -> Increasing
               Increasing -> Decreasing
 
-      ntui = tui & timeOrder .~ new
+      ntui = case getDisplayState (tui ^. displayState) of
+        DisplayTopic -> tui & timeOrder .~ new  -- TODO check this is right
+        _ -> tui
 
   in continue ntui
 
--- drop the s event in all other cases
-handleTuiEvent tui (VtyEvent (EvKey (KChar 's') _)) = continue tui
 
 -- The v keypress will load the URL in a web browser (Linux only,
 -- and only those that support the gio command):
@@ -556,29 +577,35 @@ handleTuiEvent tui (VtyEvent (EvKey (KChar 's') _)) = continue tui
 -- topics, posts = Just _, singlePostView is True -> /t/slug/id/number
 --
 handleTuiEvent tui (VtyEvent (EvKey (KChar 'v') _)) = do
-  let frag = case tui ^. posts of
-               Just stopic ->
-                 let plist = stopic ^. stList
-                     n = case WL.listSelectedElement (orderSelect (tui ^. timeOrder) plist) of
-                       Just (_, post) -> post ^. postNumber
-                       Nothing -> 1
 
-                 in "t/" <> stopic ^. stSlug <> "/" <> showInt (stopic ^. stId) <>
-                    if tui ^. singlePostView then "/" <> showInt n else ""
-               Nothing -> "latest"
+  let frag = case getDisplayState (tui ^. displayState) of
+               DisplayTopic -> base
+               DisplayPost -> base <> "/" <> showInt n
+               _ -> "latest"
+
+      -- we only use stopic when we know this succeeds
+      Just stopic = tui ^. posts
+      plist = stopic ^. stList
+      n = case WL.listSelectedElement (orderSelect (tui ^. timeOrder) plist) of
+            Just (_, post) -> post ^. postNumber
+            Nothing -> 1
+
+      base = "t/" <> stopic ^. stSlug <> "/" <> showInt (stopic ^. stId)
 
   liftIO (showPage (tui ^. baseURL) frag)
   continue tui
 
 -- Handle movement in the single-post view:
---  - do we move within the page (up/down, pgup,pgdown, home./end)
+--  - do we move within the page (up/down, pgup,pgdown, home/end)
 --  - do we move to the next or previous posts?
 --
 -- We could be clever but instead 'cheat' and use the shift key to indicate
 -- the shifts are *within* the page and no-specifier (well, technically
 -- all other ones) to indicate between posts
 --
-handleTuiEvent tui (VtyEvent (EvKey k [MShift])) | tui ^. singlePostView
+-- Unfortunately my WM seams to eat up the pgup/down/home/end key presses.
+--
+handleTuiEvent tui (VtyEvent (EvKey k [MShift])) | getDisplayState (tui ^. displayState) == DisplayPost
   = let vp = viewportScroll SinglePostView
 
         op = case k of
@@ -594,7 +621,7 @@ handleTuiEvent tui (VtyEvent (EvKey k [MShift])) | tui ^. singlePostView
     in op >> continue tui
        
 
-handleTuiEvent tui (VtyEvent (EvKey k _)) | tui ^. singlePostView && k `elem` [KUp, KDown]
+handleTuiEvent tui (VtyEvent (EvKey k _)) | getDisplayState (tui ^. displayState) == DisplayPost && k `elem` [KUp, KDown]
   = let Just posts' = tui ^. posts
 
         -- If we didn't want to make up always go backwards in time
@@ -609,54 +636,80 @@ handleTuiEvent tui (VtyEvent (EvKey k _)) | tui ^. singlePostView && k `elem` [K
 
     in continue ntui
 
-
-handleTuiEvent tui (VtyEvent (EvKey KRight _)) | isJust (tui ^. posts)
+handleTuiEvent tui (VtyEvent (EvKey KRight _)) | getDisplayState (tui ^. displayState) == DisplayAllTopics 
   = do
-  ntui <- liftIO (updateTime tui)
-  continue $ ntui & singlePostView .~ not (ntui ^. singlePostView)
-
-handleTuiEvent tui (VtyEvent (EvKey _ _)) | isJust (tui ^. posts) && tui ^. singlePostView
-  = do
-  ntui <- liftIO (updateTime tui)
-  continue $ ntui & singlePostView .~ False
-
-handleTuiEvent tui (VtyEvent (EvKey KRight  _)) = do
   ntui <- liftIO (updateTime tui)
   posts' <- liftIO $ getPosts ntui
-  continue $ ntui & posts ?~ posts'
+  let display = if posts' ^. stNumPosts == 1 then DisplayPost else DisplayTopic
+      Just nstate = updateDisplayState (tui ^. displayState) display
+      ntui' = ntui & posts ?~ posts' & displayState .~ nstate
+  continue ntui'
 
-handleTuiEvent tui (VtyEvent (EvKey KLeft   _))
-    = do
-
-  -- Need to handle an error when killing the thread (maybe it has
-  -- finished). Also only need to do if the mvar is not empty, but
-  -- that could also change duringprocessing so still need the error
-  -- handling.
-  --
-  -- How can this be lensified?
-  --
-  case tui ^. posts of
-    Nothing -> pure()
-    Just posts' -> case posts' ^. stDownload of
-      Nothing -> pure ()
-      Just dl -> do
-        flag <- liftIO (isEmptyMVar (dl ^. edQuery))
-        unless flag $ liftIO (killThread (dl ^. edTID))
-
+handleTuiEvent tui (VtyEvent (EvKey KRight _)) | getDisplayState (tui ^. displayState) == DisplayTopic 
+  = do
   ntui <- liftIO (updateTime tui)
-  continue $ ntui & posts .~ Nothing
+  let ntui' = ntui & displayState .~ nstate
+      Just nstate = updateDisplayState (tui ^. displayState) DisplayPost
+  continue ntui'
+
+-- Left out of a post takes us to the topic UNLESS it's a single-post topic
+-- Really I should worry about killing the download thread when swapping
+-- to DisplayAllTopics **but** we know we don't have that case here as
+-- there's only 1 post.
+--
+handleTuiEvent tui (VtyEvent (EvKey KLeft  _))
+  | getDisplayState (tui ^. displayState) == DisplayPost
+  = let Just posts' = tui ^. posts
+        (nposts, display) = if posts' ^. stNumPosts == 1
+                            then (Nothing, DisplayAllTopics)
+                            else (Just posts', DisplayTopic)
+
+        Just nstate = updateDisplayState (tui ^. displayState) display
+
+    in do
+      ntui <- liftIO (updateTime tui)
+      continue $ ntui & posts .~ nposts & displayState .~ nstate
+
+
+-- Left out of a topic takes us to the topic list and removes and
+-- outstanding downloads. We could just let them finish.
+--
+handleTuiEvent tui (VtyEvent (EvKey KLeft  _)) |
+  getDisplayState (tui ^. displayState) == DisplayTopic
+  = let Just posts' = tui ^. posts
+
+        Just nstate = updateDisplayState (tui ^. displayState) DisplayAllTopics
+
+    in do
+
+      case posts' ^. stDownload of
+        Nothing -> pure ()
+        Just dl -> do
+          flag <- liftIO (isEmptyMVar (dl ^. edQuery))
+          unless flag $ liftIO (killThread (dl ^. edTID))
+
+      ntui <- liftIO (updateTime tui)
+      let ntui' = ntui & posts .~ Nothing & displayState .~ nstate
+      continue ntui'
+
+
+
 
 -- Should we update the time in these cases? It would make the display
 -- "reactive", but it also might be confusing when scrolling to see
 -- the times change.
 --
-handleTuiEvent tui ev | isJust (tui ^. posts)
+handleTuiEvent tui ev | getDisplayState (tui ^. displayState) == DisplayTopic
   = let Just posts' = tui ^. posts
         list = posts' ^. stList
     in scrollHandler (\x -> tui & posts ?~ (posts' & stList .~ x)) list ev
 
-handleTuiEvent tui ev
+handleTuiEvent tui ev | getDisplayState (tui ^. displayState) == DisplayAllTopics
     = scrollHandler (\x -> tui & topics .~ x) (tui ^. topics) ev
+
+-- nothing else to do so update the time
+handleTuiEvent tui _ = liftIO (updateTime tui) >>= continue
+
 
 listLength :: WL.List n a -> Int
 listLength = V.length . WL.listElements

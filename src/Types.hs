@@ -4,12 +4,11 @@
 
 module Types (TuiState(..)
              , currentTime
-             , showHelp
              , topics
              , posts
              , baseURL
-             , singlePostView
              , timeOrder
+             , displayState
              , Category
              , categoryId
              , categoryName
@@ -63,6 +62,7 @@ module Types (TuiState(..)
              , SingleTopic
              , toSingleTopic
              , stId
+             , stNumPosts
              , stSlug
              , stList
              , stDownload
@@ -70,6 +70,12 @@ module Types (TuiState(..)
              , ResourceName(..)
              , Slug
              , topicHeight
+             , DisplayState
+             , Display(..)
+             , initDisplayState
+             , getDisplayState
+             , getPreviousDisplayState
+             , updateDisplayState
              ) where
 
 import qualified Data.Text as T
@@ -307,25 +313,65 @@ toExtraDownload = ED
 data SingleTopic = SingleTopic
   {
     _stId :: Int
+  , _stNumPosts :: Int  -- the number of posts
   , _stSlug :: Slug
   , _stList :: List ResourceName Post
   , _stDownload :: Maybe ExtraDownload
   } -- deriving (Show)
 
-toSingleTopic :: Int -> Slug -> List ResourceName Post -> Maybe ExtraDownload -> SingleTopic
+toSingleTopic ::
+  Int    -- post id
+  -> Int -- the number of posts
+  -> Slug -> List ResourceName Post -> Maybe ExtraDownload -> SingleTopic
 toSingleTopic = SingleTopic
 
 
 data TuiState = TuiState
     {
-      _currentTime :: UTCTime,
-      _showHelp :: Bool,
-      _topics :: List ResourceName Topic,
-      _posts :: Maybe SingleTopic, -- Nothing if not in post view
-      _baseURL :: String,
-      _singlePostView :: Bool, -- if we're looking at the full contents of one post
-      _timeOrder :: TimeOrder
+      _currentTime :: UTCTime
+    , _topics :: List ResourceName Topic
+    , _posts :: Maybe SingleTopic -- Nothing if not in post view
+    , _baseURL :: String
+    , _timeOrder :: TimeOrder
+    , _displayState :: DisplayState
     } -- deriving (Show)
+
+
+-- We want to be able to bounce into help and then back to the previous
+-- page so we store that case as
+--    DSHelp previous
+-- otherwise we expect
+--    DS x where x is not DisplayHelp
+--
+data DisplayState =
+  DS Display
+  | DSHelp Display
+
+data Display =
+  DisplayAllTopics -- the list of topics
+  | DisplayTopic -- an individual topic
+  | DisplayPost
+  | DisplayHelp
+  deriving Eq
+
+
+initDisplayState :: DisplayState
+initDisplayState = DS DisplayAllTopics
+
+getDisplayState :: DisplayState -> Display
+getDisplayState (DS d) = d
+getDisplayState (DSHelp _) = DisplayHelp
+
+getPreviousDisplayState :: DisplayState -> Maybe Display
+getPreviousDisplayState (DSHelp d) = Just d
+getPreviousDisplayState (DS _) = Nothing
+
+-- DisplayHelp acts as a toggle
+updateDisplayState :: DisplayState -> Display -> Maybe DisplayState
+updateDisplayState (DS d) DisplayHelp = Just (DSHelp d)
+updateDisplayState (DSHelp d) DisplayHelp = Just (DS d)
+updateDisplayState (DSHelp _) _ = Nothing  -- should not be possible
+updateDisplayState (DS _) d = Just (DS d)
 
 type Slug = T.Text
 
