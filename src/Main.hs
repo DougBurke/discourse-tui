@@ -1,4 +1,5 @@
 {-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 module Main (main) where
@@ -34,13 +35,14 @@ import Brick.Widgets.Center (hCenter)
 
 import Control.Concurrent (forkIO, killThread)
 import Control.Concurrent.MVar (isEmptyMVar, newEmptyMVar, putMVar, tryTakeMVar)
-import Control.Exception (evaluate)
+import Control.Exception (IOException, catch, evaluate)
 import Control.Lens (Getting
                     , (&), (?~), (.~), (^.), _2
                     , view)
-import Control.Monad (unless, void)
+import Control.Monad (unless, void, when)
 import Control.Monad.IO.Class (liftIO)
 
+import Data.Bifunctor (bimap)
 import Data.List (intercalate)
 import Data.Maybe (isJust)
 import Data.Time (UTCTime, diffUTCTime, getCurrentTime)
@@ -85,15 +87,65 @@ helpMessage = intercalate "\n"
   , ""
   , "     discource-tui haskell"
   , "     discourse-tui https://discourse.haskell.org"
+  , ""
+  , "Aliases can be stored in a file called aliases and the form is"
+  , "    alias  url"
+  , "with one alias per line and no leading or trailing spaces."
+  , ""
   ]
+
+
+-- Not worth a map yet
+
+newtype Aliases = Aliases [(String, String)]
+  deriving (Semigroup, Monoid, Show)
+
+readAliases :: IO Aliases
+readAliases = catch _read errHandler
+  where
+    errHandler :: IOException -> IO Aliases
+    errHandler _ = pure mempty
+
+    _read = getAliases <$> readFile "aliases"
+
+
+-- forget the error checking for now
+getAliases :: String -> Aliases
+getAliases cts =
+  let ls = lines cts
+      alltoks = map (span (/= ' ')) ls
+      cleantoks = map (bimap clean clean) alltoks
+      toks = filter (\(l,r) -> "" `notElem` [l,r]) cleantoks
+
+      cleanEdge = dropWhile (== ' ')
+      clean x = let a = cleanEdge (reverse x)
+                in cleanEdge (reverse a)
+
+  in Aliases toks
+
+
+-- Expand out the alias if known, otherwise return the key.
+--
+checkIfAlias :: Aliases -> String -> Maybe String
+checkIfAlias (Aliases v) k = lookup k v
+
+
+checkArg :: Aliases -> String -> String
+checkArg aliases key =
+  if '.' `elem` key
+  then key
+  else case checkIfAlias aliases key of
+         Just v -> v
+         _ -> "https://discourse." <> key <> ".org"
+
 
 parseArgs :: IO String
 parseArgs = do
+    aliases <- readAliases
     args <- getArgs
+    when ("--help" `elem` args) (die helpMessage)
     case args of
-      [x] | x /= "--help" -> pure $ if '.' `elem` x
-                                    then x
-                                    else "https://discourse." ++ x ++ ".org"
+      [x] -> pure (checkArg aliases x)
       _ -> die helpMessage
 
 
