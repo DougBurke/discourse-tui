@@ -52,6 +52,7 @@ import Graphics.Vty.Attributes (blue, bold, defAttr, green, reverseVideo, withSt
 
 import Network.HTTP.Simple (getResponseBody, httpJSON, parseRequest, setRequestQueryString)
 
+import System.Directory (XdgDirectory(XdgConfig), getXdgDirectory)
 import System.Environment (getArgs)
 import System.Exit (die)
 import System.Process (spawnProcess)
@@ -88,8 +89,11 @@ helpMessage = intercalate "\n"
   , "     discource-tui haskell"
   , "     discourse-tui https://discourse.haskell.org"
   , ""
-  , "Aliases can be stored in a file called aliases and the form is"
-  , "    alias  url"
+  , "Aliases can be stored in a file called aliases in the directory"
+  , "$XDG_CONFIG_HOME/discouse-tui, and the form is"
+  , ""
+  , "    alias url"
+  , ""
   , "with one alias per line and no leading or trailing spaces."
   , ""
   ]
@@ -100,13 +104,19 @@ helpMessage = intercalate "\n"
 newtype Aliases = Aliases [(String, String)]
   deriving (Semigroup, Monoid, Show)
 
+-- Read the aliases from the XDG_CONFIG_HOME / "discourse-tui" / "aliases"
+-- or return the default (empty list) if not set.
+--
 readAliases :: IO Aliases
 readAliases = catch _read errHandler
   where
     errHandler :: IOException -> IO Aliases
     errHandler _ = pure mempty
 
-    _read = getAliases <$> readFile "aliases"
+    _read = do
+      base <- getXdgDirectory XdgConfig "discourse-tui"
+      let filename = base <> "/" <> "aliases"
+      getAliases <$> readFile filename
 
 
 -- forget the error checking for now

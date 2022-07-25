@@ -13,7 +13,7 @@ name:                discourse-tui
 -- PVP summary:      +-+------- breaking API changes
 --                   | | +----- non-breaking API additions
 --                   | | | +--- code changes with no API change
-version:             0.1.0.0
+version:             0.2.0.0
 
 -- A short (one-line) description of the package.
 synopsis:            A terminal user interface for discourse
@@ -35,7 +35,7 @@ author:              Jack Wines
 
 -- An email address to which users can send suggestions, bug reports, and
 -- patches.
-maintainer:          jack@winesj.com
+maintainer:          dburke.gw@gmail.com
 
 -- A copyright notice.
 -- copyright:
@@ -68,6 +68,7 @@ executable discourse-tui
                        pandoc,
                        text,
                        lens,
+                       directory >= 1.2.3,
                        bytestring == 0.10.*,
                        formatting >= 7.1 && < 7.3,
                        process == 1.6.*,
