@@ -69,10 +69,10 @@ executable discourse-tui
                        text,
                        lens,
                        directory >= 1.2.3,
-                       bytestring == 0.10.*,
+                       bytestring >= 0.10 && < 0.12,
                        formatting >= 7.1 && < 7.3,
                        process == 1.6.*,
-                       time == 1.9.*
+                       time >= 1.9 && < 1.13
 
   -- Directories containing source files.
   hs-source-dirs:      src
