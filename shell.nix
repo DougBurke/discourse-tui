@@ -1,3 +1,3 @@
-{ compiler ? "ghc8107"
+{ compiler ? "ghc92"
 }:
 (import ./release.nix { compiler = compiler; }).shell
