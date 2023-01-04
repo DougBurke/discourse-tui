@@ -58,7 +58,7 @@ executable discourse-tui
 
   -- Other library packages from which modules are imported.
   build-depends:       base,
-                       brick,
+                       brick >= 1.0 && < 1.6,
                        cursor,
                        aeson,
                        http-conduit,
