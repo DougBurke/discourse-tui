@@ -29,10 +29,9 @@ import Brick (BrickEvent(..), App(..), EventM, Padding(..), ViewportType(Vertica
               viewport, viewportScroll,
               vScrollBy, vScrollToBeginning, vScrollToEnd, vScrollPage,
               vLimit,
-              withAttr, withBorderStyle)
+              withAttr)
 import Brick.Main (halt)
-import Brick.Widgets.Border (border)
-import Brick.Widgets.Border.Style (unicodeRounded)
+import Brick.Widgets.Border (hBorder, hBorderAttr)
 import Brick.Widgets.Center (hCenter)
 
 import Control.Concurrent (forkIO, killThread)
@@ -50,7 +49,7 @@ import Data.Maybe (isJust)
 import Data.Time (UTCTime, diffUTCTime, getCurrentTime)
 
 import Graphics.Vty.Input.Events (Event(..), Key(..), Modifier(MShift))
-import Graphics.Vty.Attributes (blue, bold, defAttr, green, reverseVideo, withStyle, yellow)
+import Graphics.Vty.Attributes (blue, bold, defAttr, dim, green, reverseVideo, withStyle, yellow)
 
 import Network.HTTP.Simple (getResponseBody, httpJSON, parseRequest, setRequestQueryString)
 
@@ -335,7 +334,9 @@ tuiApp =
                               , (attrName "selected", withStyle defAttr reverseVideo)
                               , (attrName "OP", fg blue)
                               , (attrName "rest", defAttr)
-                              , (attrName "bar", fg yellow) ]
+                              , (attrName "bar", fg yellow)
+                              , (hBorderAttr <> attrName "standard", withStyle defAttr dim)
+                              ]
 
   in App
      { appDraw = drawTui
@@ -357,17 +358,24 @@ drawTui tui =
     DisplayHelp -> displayHelp tui
 
 
+-- I don't think this actually changes anything, but leave in for now.
+--
+dimHorizontal :: Widget n
+dimHorizontal = withAttr (hBorderAttr <> attrName "standard") hBorder
+
+
 displayAllTopics :: TuiState -> [Widget ResourceName]
 displayAllTopics tui =
-  [WL.renderList drawTopic True (tui ^. topics) <=> helpBar Nothing False]
+  [dimHorizontal <=>
+   WL.renderList drawTopic True (tui ^. topics) <=>
+   helpBar Nothing False]
     where
         drawTopic selected tpc
-          = withBorderStyle unicodeRounded
-            . border
-            . (if tpc ^. pinned then withAttrName "pinned" else id)
+          = (if tpc ^. pinned then withAttrName "pinned" else id)
             . padRight Max
             $ (likes' <+> title' <+> lastMod) <=>
-            hBox [category', postsCount', posters']
+              hBox [category', postsCount', posters'] <=>
+              dimHorizontal
           where
                 lastMod = padLeft Max
                           . padRight (Pad 1)
@@ -421,7 +429,8 @@ displayHelp tui = [renderHelp tui]
 
 renderTopic :: TuiState -> Widget ResourceName
 renderTopic tui
-    = WL.renderList drawPost True posts'
+    = dimHorizontal
+      <=> WL.renderList drawPost True posts'
       <=> helpBar (Just order) (isJust (st ^. stDownload))
     where
         Just st = tui ^. posts
@@ -433,22 +442,31 @@ renderTopic tui
         -- want to indent the following by that much.
         --
         drawPost selected post
-            = border'
-            $ withAttrName (if selected then "selected" else "")
-              (hLimit 6 . padRight Max . txt $ postIdentifier post)
-            <+> ((userName'' <+> created)
-                 <=> contents')
+            = border' postWidget <=>
+              dimHorizontal
             where
+                identifier = withAttrName (if selected then "selected" else "")
+                  (hLimit 6 . padRight Max . txt $ postIdentifier post)
+
                 userName'' = withAttrName "OP" . txt $ post ^. opUserName
                 created = withAttrName "title"
                           . padLeft Max
                           . padRight (Pad 1)
                           $ txt (showTimeDelta (tui ^. currentTime) (post ^. opCreatedAt))
+                firstLine = userName'' <+> created
+
                 contents' = txtWrap (post ^. contents)
-                border' = withBorderStyle unicodeRounded
-                          . border
-                          . vLimit 8
-                          . padBottom Max
+
+                -- indent the contents based off the identifier block.
+                --
+                postWidget = identifier <+> (firstLine <=> contents')
+
+                -- could we change the text color or add an indicator to show that the
+                -- text has been cut off vertically? This would be neat but it's not
+                -- obvious how to do this.
+                --
+                border' = vLimit 8
+                          -- . padBottom Max
                           . padRight  Max
 
 
