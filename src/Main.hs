@@ -80,24 +80,33 @@ parseTopic userMap catagoryMap pt
         _pinned = pt ^. pPinned
             }
 
-helpMessage :: String
-helpMessage = intercalate "\n"
-  [ "Usage: discourse-tui url|fragment"
-  , ""
-  , "where fragment (no . character) is taken to mean https://discource.fragment.org,"
-  , "or the full URL is given. So either:"
-  , ""
-  , "     discource-tui haskell"
-  , "     discourse-tui https://discourse.haskell.org"
-  , ""
-  , "Aliases can be stored in a file called aliases in the directory"
-  , "$XDG_CONFIG_HOME/discouse-tui, and the form is"
-  , ""
-  , "    alias url"
-  , ""
-  , "with one alias per line and no leading or trailing spaces."
-  , ""
-  ]
+helpMessage :: Aliases -> String
+helpMessage (Aliases aliases) =
+  let alines = if null aliases
+               then []
+               else [ "Available aliases:"
+                    , ""
+                    ] <> map convert aliases <> [""]
+
+      convert (k, v) = "  " <> k <> ": " <> v
+
+  in intercalate "\n"
+     ([ "Usage: discourse-tui url|fragment"
+      , ""
+      , "where fragment (no . character) is taken to mean https://discource.fragment.org,"
+      , "or the full URL is given. So either:"
+      , ""
+      , "     discource-tui haskell"
+      , "     discourse-tui https://discourse.haskell.org"
+      , ""
+      , "Aliases can be stored in a file called aliases in the directory"
+      , "$XDG_CONFIG_HOME/discouse-tui, and the form is"
+      , ""
+      , "    alias url"
+      , ""
+      , "with one alias per line and no leading or trailing spaces."
+      , ""
+      ] <> alines)
 
 
 -- Not worth a map yet
@@ -136,28 +145,29 @@ getAliases cts =
 
 
 -- Expand out the alias if known, otherwise return the key.
+-- Name is a bit confusing now I've re-written some things.
 --
-checkIfAlias :: Aliases -> String -> Maybe String
-checkIfAlias (Aliases v) k = lookup k v
+checkIfAlias :: Aliases -> String -> String
+checkIfAlias (Aliases a) k = case lookup k a of
+  Just v -> v
+  _ -> "https://discourse." <> k <> ".org"
 
 
 checkArg :: Aliases -> String -> String
 checkArg aliases key =
   if '.' `elem` key
   then key
-  else case checkIfAlias aliases key of
-         Just v -> v
-         _ -> "https://discourse." <> key <> ".org"
+  else checkIfAlias aliases key
 
 
 parseArgs :: IO String
 parseArgs = do
     aliases <- readAliases
     args <- getArgs
-    when ("--help" `elem` args) (die helpMessage)
+    when ("--help" `elem` args) (die (helpMessage aliases))
     case args of
       [x] -> pure (checkArg aliases x)
-      _ -> die helpMessage
+      _ -> die (helpMessage aliases)
 
 
 main :: IO ()
@@ -165,6 +175,7 @@ main = do
     baseUrl <- parseArgs
     initialState <- getTuiState baseUrl
     void $ defaultMain tuiApp initialState
+
 
 -- initialize the TuiState with the list of topics and catagories
 getTuiState :: String -> IO TuiState
