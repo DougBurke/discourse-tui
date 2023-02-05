@@ -670,7 +670,7 @@ handleTuiEvent' tui (VtyEvent (EvKey (KChar 'h') _)) = do
 
   let nstate = case ntui ^. displayState of
         DS d -> DSHelp d
-        old -> old
+        DSHelp d -> DS d
         
   let ntui' = ntui & displayState .~ nstate
   put ntui'
