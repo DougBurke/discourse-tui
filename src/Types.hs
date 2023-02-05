@@ -3,9 +3,9 @@
 {-# LANGUAGE TemplateHaskell #-}
 
 module Types (TuiState(..)
+             , TopicList
              , currentTime
-             , topics
-             , posts
+             , topicList
              , baseURL
              , timeOrder
              , displayState
@@ -70,12 +70,9 @@ module Types (TuiState(..)
              , ResourceName(..)
              , Slug
              , topicHeight
-             , DisplayState
+             , DisplayState(..)
              , Display(..)
              , initDisplayState
-             , getDisplayState
-             , getPreviousDisplayState
-             , updateDisplayState
              ) where
 
 import qualified Data.Text as T
@@ -325,16 +322,25 @@ toSingleTopic ::
   -> Slug -> List ResourceName Post -> Maybe ExtraDownload -> SingleTopic
 toSingleTopic = SingleTopic
 
+type TopicList = List ResourceName Topic
 
-data TuiState = TuiState
-    {
-      _currentTime :: UTCTime
-    , _topics :: List ResourceName Topic
-    , _posts :: Maybe SingleTopic -- Nothing if not in post view
-    , _baseURL :: String
-    , _timeOrder :: TimeOrder
-    , _displayState :: DisplayState
-    } -- deriving (Show)
+{-
+
+Originally there was a field defining what should be displayed, but I
+decided to make it so that the state defined the display, to try and
+make unrepresentable states impossible, and avoid a number of
+incomplete-pattern matchig checks I knew were "impossible".
+
+-}
+
+data TuiState =
+  TuiState
+  { _currentTime :: UTCTime
+  , _topicList :: TopicList
+  , _baseURL :: String
+  , _timeOrder :: TimeOrder
+  , _displayState :: DisplayState
+  }
 
 
 -- We want to be able to bounce into help and then back to the previous
@@ -348,30 +354,14 @@ data DisplayState =
   | DSHelp Display
 
 data Display =
-  DisplayAllTopics -- the list of topics
-  | DisplayTopic -- an individual topic
-  | DisplayPost
-  | DisplayHelp
-  deriving Eq
+  DisplayAllTopics
+  | DisplayTopic SingleTopic
+  | DisplayPost SingleTopic
+  -- deriving Eq
 
 
 initDisplayState :: DisplayState
 initDisplayState = DS DisplayAllTopics
-
-getDisplayState :: DisplayState -> Display
-getDisplayState (DS d) = d
-getDisplayState (DSHelp _) = DisplayHelp
-
-getPreviousDisplayState :: DisplayState -> Maybe Display
-getPreviousDisplayState (DSHelp d) = Just d
-getPreviousDisplayState (DS _) = Nothing
-
--- DisplayHelp acts as a toggle
-updateDisplayState :: DisplayState -> Display -> Maybe DisplayState
-updateDisplayState (DS d) DisplayHelp = Just (DSHelp d)
-updateDisplayState (DSHelp d) DisplayHelp = Just (DS d)
-updateDisplayState (DSHelp _) _ = Nothing  -- should not be possible
-updateDisplayState (DS _) d = Just (DS d)
 
 type Slug = T.Text
 
