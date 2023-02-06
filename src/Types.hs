@@ -4,15 +4,27 @@
 
 module Types (TuiState(..)
              , TopicList
+             , CategoryList
              , currentTime
              , topicList
+             , categoryList
              , baseURL
              , timeOrder
              , displayState
              , Category
              , categoryId
+             , subCategoryList  -- note: naming is not great
+             -- , subcategoryId
+             , subcategoryName
+             , subcategoryDesc
              , categoryName
+             , categorySlug
+             , categoryDesc
+             , categoryNTopic
+             , categoryNPost
              , categories
+             , CategoryResponse
+             , convertSubCat
              , ProtoTopic
              , pTopicId
              , pCategoryId
@@ -36,6 +48,7 @@ module Types (TuiState(..)
              -- , postHighest
              , postResponseId
              , postSlug
+             , postTitle
              , postList
              , postIds
              , PostSelectedResponse
@@ -64,6 +77,7 @@ module Types (TuiState(..)
              , stId
              , stNumPosts
              , stSlug
+             , stTitle
              , stList
              , stDownload
              , TimeOrder(..)
@@ -86,12 +100,13 @@ import Control.Lens
 
 import Data.Aeson (FromJSON, (.:), (.:?), (.!=)
                   , parseJSON, withObject)
+import Data.Maybe (fromMaybe)
 import Data.Time (UTCTime)
 
 
 -- Labels for the UI
 --
-data ResourceName = Contents | Posts | SinglePostView
+data ResourceName = Contents | Categories | Posts | SinglePostView
   deriving (Eq, Ord, Show)
 
 
@@ -99,7 +114,7 @@ instance FromJSON ProtoTopic where
     parseJSON = withObject "ProtoTopic" $ \v -> do 
         topicId' <- v .: "id"
         title'  <- v .: "title"
-        lastUpdated' <- v .: "last_posted_at"  -- can this be empty or missing?
+        lastUpdated' <- v .:? "last_posted_at"  -- can this be empty or missing?  - can be empty
         likeCount' <- v.: "like_count"
         postsCount' <- v.: "posts_count"
         posters' <- v.: "posters"
@@ -132,25 +147,41 @@ instance FromJSON Poster where
       <*> v .: "description"
 
 instance FromJSON Category where
-    parseJSON = withObject "Category" $ \v ->
+    parseJSON = withObject "Category" $ \v -> do
       Category
       <$> v .: "id"
       <*> v .: "name"
-      <*> v .:? "subcategory_ids" .!= V.empty
+      <*> v .: "slug"
+      <*> v .: "topic_count"
+      <*> v .: "post_count"
+      <*> v .:? "subcategory_list" .!= V.empty
+      <*> v .: "description_text"
 
--- We hack categories to support the "sub-categories"
+
+-- This is a bit annoying
+--
+instance FromJSON SubCategory where
+    parseJSON = withObject "Category" $ \v ->
+      SubCategory
+      <$> v .: "id"
+      <*> v .: "name"
+      <*> v .: "slug"
+      <*> v .: "topic_count"
+      <*> v .: "post_count"
+      <*> v .:? "description_text"
+
+-- If asking for categories.json then we have subcategory_ids as a list
+-- of integers.
+--
+-- If parsing categories.json?include_categories=true then we also have
+-- subcategory_list as a list of categories
+--
 instance FromJSON CategoryResponse where
     parseJSON = withObject "CategoryResponse" $ \v -> do
         categoryList <- v .: "category_list"
         categories' <- categoryList .: "categories"
+        pure $ CategoryResponse categories'
 
-        -- fake the sub-categories
-        let extra = V.filter (not . null . _subCategoryIds) categories'
-            dup c = V.map (fake c) (_subCategoryIds c)
-            fake cat cid = Category cid (_categoryName cat <> " [SUB-CATEGORY]") V.empty
-            extra' = V.concatMap dup extra
-
-        pure $ CategoryResponse $ categories' V.++ extra'
 
 -- post_stream.stream is a list of integers of all the items;
 -- these give the id of the individual posts, so we can find the
@@ -164,9 +195,10 @@ instance FromJSON PostResponse where
         -- highestPost <- v .: "highest_post_number"
         id' <- v .: "id"
         slug' <- v .: "slug"
+        title' <- v .: "title"
         posts' <- postStream .: "posts"
         postids <- postStream .: "stream"
-        pure $ PostResponse chunkSize id' slug' posts' postids
+        pure $ PostResponse chunkSize id' slug' title' posts' postids
 
 instance FromJSON PostSelectedResponse where
     parseJSON = withObject "PostSelectedResponse" $ \v -> do
@@ -228,7 +260,7 @@ data ProtoTopic = ProtoTopic
     _pTopicId :: Int,
     _pCategoryId :: Int,
     _pTitle :: T.Text,
-    _pLastUpdated :: UTCTime,
+    _pLastUpdated :: Maybe UTCTime,
     _pLikeCount :: Int,
     _pPostsCount :: Int,
     _pPosters :: V.Vector Poster,
@@ -240,7 +272,7 @@ data Topic = Topic
     _topicId :: Int,
     _category :: T.Text,
     _title :: T.Text,
-    _lastUpdated :: UTCTime,
+    _lastUpdated :: Maybe UTCTime,
     _likeCount :: Int,
     _postsCount :: Int,
     _posters :: V.Vector T.Text,
@@ -259,8 +291,30 @@ data Category = Category
     {
     _categoryId :: Int,
     _categoryName :: T.Text,
-    _subCategoryIds :: V.Vector Int
+    _categorySlug :: T.Text,
+    _categoryNTopic :: Int,
+    _categoryNPost :: Int,
+    _subCategoryList :: V.Vector SubCategory,
+    _categoryDesc :: T.Text
     } deriving (Show)
+
+-- Should just be able to use category but at least this
+-- means we don't have to bother with sub-sub categories.
+--
+data SubCategory = SubCategory
+    {
+    _subcategoryId :: Int,
+    _subcategoryName :: T.Text,
+    _subcategorySlug :: T.Text,
+    _subcategoryNTopic :: Int,
+    _subcategoryNPost :: Int,
+    _subcategoryDesc :: Maybe T.Text
+    } deriving (Show)
+
+
+convertSubCat :: SubCategory -> Category
+convertSubCat (SubCategory a b c d e f) = Category a b c d e V.empty (fromMaybe "<sub category>" f)
+
 
 data Poster = Poster
     {
@@ -273,7 +327,8 @@ data PostResponse = PostResponse
     _postChunkSize :: Int
   -- , _postHighest :: Int
   , _postResponseId :: Int
-  , _postSlug :: T.Text
+  , _postSlug :: Slug
+  , _postTitle :: T.Text
   , _postList :: V.Vector Post
   , _postIds :: V.Vector Int
   } deriving (Show)
@@ -312,6 +367,7 @@ data SingleTopic = SingleTopic
     _stId :: Int
   , _stNumPosts :: Int  -- the number of posts
   , _stSlug :: Slug
+  , _stTitle :: T.Text
   , _stList :: List ResourceName Post
   , _stDownload :: Maybe ExtraDownload
   } -- deriving (Show)
@@ -319,10 +375,15 @@ data SingleTopic = SingleTopic
 toSingleTopic ::
   Int    -- post id
   -> Int -- the number of posts
-  -> Slug -> List ResourceName Post -> Maybe ExtraDownload -> SingleTopic
+  -> Slug
+  -> T.Text -- the title
+  -> List ResourceName Post
+  -> Maybe ExtraDownload
+  -> SingleTopic
 toSingleTopic = SingleTopic
 
 type TopicList = List ResourceName Topic
+type CategoryList = List ResourceName Category
 
 {-
 
@@ -337,6 +398,7 @@ data TuiState =
   TuiState
   { _currentTime :: UTCTime
   , _topicList :: TopicList
+  , _categoryList :: CategoryList
   , _baseURL :: String
   , _timeOrder :: TimeOrder
   , _displayState :: DisplayState
@@ -357,6 +419,8 @@ data Display =
   DisplayAllTopics
   | DisplayTopic SingleTopic
   | DisplayPost SingleTopic
+  | DisplayAllCategories
+  | DisplayCategory Slug Int T.Text TopicList
   -- deriving Eq
 
 
@@ -370,6 +434,7 @@ makeLenses ''Post
 makeLenses ''PostResponse
 makeLenses ''PostSelectedResponse
 makeLenses ''Category
+makeLenses ''SubCategory
 makeLenses ''Poster
 makeLenses ''ProtoTopic
 makeLenses ''Topic

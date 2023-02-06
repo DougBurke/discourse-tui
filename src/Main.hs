@@ -28,7 +28,7 @@ import Brick (BrickEvent(..), App(..), EventM, Padding(..), ViewportType(Vertica
               txt, txtWrap,
               viewport, viewportScroll,
               vScrollBy, vScrollToBeginning, vScrollToEnd, vScrollPage,
-              vLimit,
+              vLimit, emptyWidget,
               withAttr)
 import Brick.Main (halt)
 import Brick.Widgets.Border (hBorder, hBorderAttr)
@@ -44,12 +44,12 @@ import Control.Monad (unless, void, when)
 import Control.Monad.IO.Class (liftIO)
 
 import Data.Bifunctor (bimap)
-import Data.List (intercalate)
+import Data.List (intercalate, foldl')
 import Data.Maybe (isJust)
 import Data.Time (UTCTime, diffUTCTime, getCurrentTime)
 
 import Graphics.Vty.Input.Events (Event(..), Key(..), Modifier(MShift))
-import Graphics.Vty.Attributes (blue, bold, defAttr, dim, green, reverseVideo, withStyle, yellow)
+import Graphics.Vty.Attributes (blue, bold, defAttr, dim, green, reverseVideo, withStyle, cyan, yellow)
 
 import Network.HTTP.Simple (getResponseBody, httpJSON, parseRequest, setRequestQueryString)
 
@@ -184,29 +184,54 @@ getTuiState baseUrl = do
   let baseUrl' = if last baseUrl == '/' then baseUrl else baseUrl <> "/"
 
   topicsRequest <- parseRequest (baseUrl' <> "latest.json")
-  categoriesRequest <- parseRequest (baseUrl' <> "categories.json")
+  categoriesRequest <- parseRequest (baseUrl' <> "categories.json" <> "?include_subcategories=true")
   categoriesResp <- getResponseBody <$> httpJSON categoriesRequest
   tps <- getResponseBody <$> httpJSON topicsRequest
+  now <- getCurrentTime
 
+  pure (processTopics baseUrl' now categoriesResp tps)
+
+
+processTopics ::
+  String
+  -> UTCTime
+  -> CategoryResponse
+  -> TopicResponse
+  -> TuiState
+processTopics baseUrl now categoriesResp tps =  
   let users = tps ^. tpUsers
 
       tokenize :: Getting M.Key a M.Key -> V.Vector a -> M.IntMap a
       tokenize f = M.fromList . V.toList . V.map (\x -> (x ^. f, x))
 
+      -- Create basic mappings for the user and categories. It is
+      -- easy for users, but for categories we need to handle
+      -- subcategories.
+      --
       userMap = tokenize userId users
-      categoryMap = tokenize categoryId $ categoriesResp ^. categories
+      categoryMap = tokenize categoryId catList <>
+                    tokenize categoryId subCatList
 
-      widgetList = V.map (parseTopic userMap categoryMap) (tps ^. tpTopicList)
-      topics' = WL.list Contents widgetList topicHeight
+      topList = V.map (parseTopic userMap categoryMap) (tps ^. tpTopicList)
+      topics = WL.list Contents topList topicHeight
 
-  now <- getCurrentTime
-  pure TuiState {
+      catList = categoriesResp ^. categories
+      cats = WL.list Categories catList topicHeight
+
+      -- Pull out the subcategories *AND* convert them to categories
+      -- so that categoryMap works.
+      --
+      subCatList = V.concatMap (\cat -> V.map convertSubCat (cat ^. subCategoryList)) catList
+  
+  in TuiState {
     _currentTime = now
-    , _topicList = topics'
-    , _baseURL = baseUrl'
+    , _topicList = topics
+    , _categoryList = cats
+    , _baseURL = baseUrl
     , _timeOrder = Increasing
     , _displayState = initDisplayState
     }
+
 
 -- The help bar at the bottom, for most pages.
 --
@@ -254,7 +279,7 @@ showOrder Decreasing = "↓" -- unicode 2193  "-"
 
 
 -- Get the posts for the current topic. The initial query
--- uses t/topcid.json which returns the first set of data and
+-- uses t/topicid.json which returns the first set of data and
 -- a list of all the posts in the topic. We then set up a
 -- thread to download the remaining data, which will be checked
 -- by handleTuiEvent.
@@ -282,7 +307,7 @@ getPosts ts = do
         nposts = V.length (pr ^. postIds)
 
     mExtra <- getExtraPosts extraURL extraIds
-    pure $ toSingleTopic (pr ^. postResponseId) nposts (pr ^. postSlug) (WL.list Posts basePosts 10) mExtra
+    pure $ toSingleTopic (pr ^. postResponseId) nposts (pr ^. postSlug) (pr ^. postTitle) (WL.list Posts basePosts 10) mExtra
 
 
 getExtraPosts :: String -> V.Vector Int -> IO (Maybe ExtraDownload)
@@ -319,6 +344,34 @@ toMarkdown s = do
         writeCommonMark def doc
     handleError result
 
+-- Want to query /c/<slug>/<id>.json
+--
+-- This re-uses the AllPosts view, which is a bit naughty
+--
+getCategory ::
+  UTCTime
+  -> TuiState
+  -> IO (T.Text, Int, T.Text, TopicList)
+getCategory ct ts = do
+
+    -- need a lens to get the pair of values
+    let mcat = WL.listSelectedElement (ts ^. categoryList)
+        Just idVal = view (_2 . categoryId) <$> mcat
+        Just slugVal = view (_2 . categorySlug) <$> mcat
+        Just nameVal = view (_2 . categoryName) <$> mcat
+        postURL = mconcat [url, "c/", T.unpack slugVal, "/", show idVal, ".json"]
+
+        url = ts ^. baseURL
+    
+    -- We have the category map so shouldn't need tor request the categories again.
+    --
+    topicsRequest <- parseRequest postURL
+    categoriesRequest <- parseRequest (url <> "categories.json" <> "?include_subcategories=true")
+    categoriesResp <- getResponseBody <$> httpJSON categoriesRequest
+    tps <- getResponseBody <$> httpJSON topicsRequest
+
+    pure (slugVal, idVal, nameVal, processTopics url ct categoriesResp tps ^. topicList)
+
 
 -- This reverses the list *BUT* keeps the selected element,
 -- which is a bit odd, and up/down still follow the ordering
@@ -349,6 +402,7 @@ tuiApp =
                               , (attrName "OP", fg blue)
                               , (attrName "rest", defAttr)
                               , (attrName "bar", fg yellow)
+                              , (attrName "label", fg cyan)
                               , (hBorderAttr <> attrName "standard", withStyle defAttr dim)
                               ]
 
@@ -368,27 +422,38 @@ drawTui tui =
   let time = tui ^. currentTime
       order = tui ^. timeOrder
       topics = tui ^. topicList
+      cats = tui ^. categoryList
       
   in case tui ^. displayState of
-    DS d -> display time order topics d
+    DS d -> display time order topics cats d
     DSHelp old -> displayHelp (tui ^. baseURL) order topics old
     
 
-display :: UTCTime -> TimeOrder -> TopicList -> Display -> [Widget ResourceName]
-display time _ topics DisplayAllTopics = displayAllTopics time topics
-display time order _ (DisplayTopic st) = displayTopic time st order
-display time order _ (DisplayPost st) = displayPost time st order
+display :: UTCTime -> TimeOrder -> TopicList -> CategoryList -> Display -> [Widget ResourceName]
+display time _ topics _ DisplayAllTopics = displayAllTopics "Recent" time topics
+display time order _ _ (DisplayTopic st) = displayTopic time st order
+display time order _ _ (DisplayPost st) = displayPost time st order
+
+display time _ _ cats DisplayAllCategories = displayCategories time cats
+display time _ _ _ (DisplayCategory _ _ name topics) = displayAllTopics name time topics
 
      
--- I don't think this actually changes anything, but leave in for now.
+-- I don't think this actually changes anything, but leave in for now
+-- (the use of the standard attribute).
 --
 dimHorizontal :: Widget n
 dimHorizontal = withAttr (hBorderAttr <> attrName "standard") hBorder
 
 
-displayAllTopics :: UTCTime -> TopicList -> [Widget ResourceName]
-displayAllTopics time topics =
-  [dimHorizontal <=>
+labelledLine :: T.Text -> Widget n
+labelledLine lbl =
+  let cts = hBorder <+> txt (" " <> lbl <> " ") <+> hBorder
+  in withAttr (hBorderAttr <> attrName "standard") cts
+
+
+displayAllTopics :: T.Text -> UTCTime -> TopicList -> [Widget ResourceName]
+displayAllTopics lbl time topics =
+  [labelledLine ("Topics : " <> lbl) <=>
    WL.renderList drawTopic True topics <=>
    helpBar Nothing False]
     where
@@ -399,49 +464,106 @@ displayAllTopics time topics =
               hBox [category', postsCount', posters'] <=>
               dimHorizontal
           where
-                lastMod = padLeft Max
-                          . padRight (Pad 1)
-                          $ txt (showTimeDelta time (tpc ^. lastUpdated))
+                lastMod =
+                  case tpc ^. lastUpdated of
+                    Just lt -> padLeft Max
+                               . padRight (Pad 1)
+                               $ txt (showTimeDelta time lt)
+                    Nothing -> emptyWidget
+
+                hSize = 4
+                shift = padLeft (Pad (hSize + 1))
 
                 likes' :: Widget ResourceName
                 likes' = (if selected then withAttrName "selected" else id)
                          . padRight (Pad 1)
-                         . hLimit 4
+                         . hLimit hSize
                          . padRight Max
                          . txt
-                         . T.pack
-                         . show
+                         . showInt
                          $ tpc ^. likeCount
 
                 title' :: Widget ResourceName
                 title' = withAttrName "title" . txt $ tpc ^. title
 
                 postsCount' :: Widget ResourceName
-                postsCount' = padLeft (Pad 5)
-                            . txt
-                            . ("posts: " <>)
-                            . T.pack
-                            . show
-                            $ tpc ^. postsCount
+                postsCount' = shift (countLabel "posts" (tpc ^. postsCount))
 
                 posters' :: Widget ResourceName
-                posters' = padLeft (Pad 5)
+                posters' = shift
                        . hBox
                        . mapFst (withAttrName "OP") (withAttrName "rest")
                        . showItems
                        $ tpc ^. posters
 
                 category' :: Widget ResourceName
-                category' = padLeft (Pad 5) . txt $ tpc ^. category
+                category' = shift . txt $ tpc ^. category
 
                 -- this could perhaps be re-worked now using Vector
                 showItems :: V.Vector T.Text -> [Widget ResourceName]
                 showItems v = map txt . V.toList $ (V.map (<> " ") . V.init $ v) V.++ V.singleton (V.last v)
 
 
+displayCategories :: UTCTime -> CategoryList -> [Widget ResourceName]
+displayCategories time cats =
+  [labelledLine "Categories" <=>
+   WL.renderList drawCategory True cats <=>
+   helpBar Nothing False]
+    where
+        drawCategory selected cat
+          = (catId selected cat <+>
+             ((catName cat <+> padLeft Max (nums cat)) <=>
+              txtWrap (cat ^. categoryDesc) <=>
+               subCats cat)) <=>
+            dimHorizontal
+
+        hSize = 4
+
+        catId selected cat =
+          let shower = if selected then withAttrName "selected" else id
+          in shower
+             . padRight (Pad 1)
+             . hLimit hSize
+             . padRight Max
+             . txt
+             . showInt
+             $ cat ^. categoryId
+
+        catName cat = withAttrName "title" (txt (cat ^. categoryName))
+        nums cat =
+          countLabel "posts" (cat ^. categoryNPost) <+>
+          padLeft (Pad 1) (countLabel "topics" (cat ^. categoryNTopic))
+
+        subCats cat =
+          let subs = zip [1..] (V.toList (cat ^. subCategoryList))
+
+              addDesc scat = case scat ^. subcategoryDesc of
+                Just desc -> padLeft (Pad 4) (txt desc)
+                Nothing -> emptyWidget
+
+              showSub (i, scat) =
+                let l1 = padLeft (Pad 2) (txt (showInt i)) <+>
+                         txt " " <+>
+                         txt (scat ^. subcategoryName)
+                    l2 = addDesc scat
+                in l1 <=> l2
+
+              processed = map showSub subs
+              out = foldl' (<=>) emptyWidget processed
+              
+          in (if null subs then emptyWidget else txt " ") <=> out
+
+
+countLabel :: T.Text -> Int -> Widget ResourceName
+countLabel lbl n =
+  withAttrName "label" (txt (lbl <> ":")) <+>
+  padLeft (Pad 1) (txt (showInt n))
+
+
+-- Can we send in the post title here?
 displayTopic :: UTCTime -> SingleTopic -> TimeOrder -> [Widget ResourceName]
 displayTopic time st order
-    = [dimHorizontal
+    = [labelledLine ("Post : " <> st ^. stTitle)
        <=> WL.renderList drawPost True posts'
        <=> helpBar (Just order) (isJust (st ^. stDownload))]
     where
@@ -544,6 +666,8 @@ displayHelp url order topics prev =
                     DisplayAllTopics -> "topics"
                     DisplayTopic _ -> "topic"
                     DisplayPost _ -> "post"
+                    DisplayAllCategories -> "categories"
+                    DisplayCategory {} -> "category"
 
       bottomBar = "h to return to " <> prevLabel <> " | q to quit"
 
@@ -604,13 +728,14 @@ addToList olist xs =
 downloadTuiEvent ::
   UTCTime
   -> TopicList
+  -> CategoryList
   -> String
   -> TimeOrder
   -> (SingleTopic -> Display)
   -> SingleTopic
   -> ExtraDownload
   -> EventM m TuiState ()
-downloadTuiEvent ct tl burl to dt st ed = do
+downloadTuiEvent ct tl cl burl to dt st ed = do
 
   -- Have we downloaded the data yet?
   --
@@ -629,7 +754,7 @@ downloadTuiEvent ct tl burl to dt st ed = do
       let nlist = addToList (st ^. stList) nposts
           nst = st & stList .~ nlist & stDownload .~ ned
 
-      put (TuiState ct tl burl to (DS (dt nst)))
+      put (TuiState ct tl cl burl to (DS (dt nst)))
 
 
 handleTuiEvent :: BrickEvent ResourceName e -> EventM ResourceName TuiState ()
@@ -643,6 +768,8 @@ handleTuiEvent e = do
   let isDownloading DisplayAllTopics = Nothing
       isDownloading (DisplayTopic st) = checkDownload DisplayTopic st
       isDownloading (DisplayPost st) = checkDownload DisplayPost st
+      isDownloading DisplayAllCategories = Nothing
+      isDownloading (DisplayCategory {}) = Nothing
 
       checkDownload dt st = case st ^. stDownload of
                               Just ed -> Just (dt, st, ed)
@@ -654,7 +781,7 @@ handleTuiEvent e = do
       -- just drop them.
       --
       process d = case isDownloading d of
-                    Just (dt, st, ed) -> downloadTuiEvent (tui ^. currentTime) (tui ^. topicList) (tui ^. baseURL) (tui ^. timeOrder) dt st ed
+                    Just (dt, st, ed) -> downloadTuiEvent (tui ^. currentTime) (tui ^. topicList) (tui ^. categoryList) (tui ^. baseURL) (tui ^. timeOrder) dt st ed
                     Nothing -> handleTuiEvent' tui e
 
   case tui ^. displayState of
@@ -693,17 +820,21 @@ handleTuiEvent' tui (VtyEvent (EvKey (KChar 's') _)) =
 -- and only those that support the gio command). The URL
 -- depends on what is being shown
 --
---    all topics  -> /latest
---    topic       -> /t/slug/id
---    post        -> /t/slug/id/number
+--    all topics     -> /latest
+--    topic          -> /t/slug/id
+--    post           -> /t/slug/id/number
+--    all categories -> /categories
+--    category       -> /c/slug/it
 --
 --
-handleTuiEvent' (TuiState _ _ burl to (DS ds)) (VtyEvent (EvKey (KChar 'v') _)) = do
+handleTuiEvent' (TuiState _ _ _ burl to (DS ds)) (VtyEvent (EvKey (KChar 'v') _)) = do
 
   let frag = case ds of
                DisplayAllTopics -> "latest"
                DisplayTopic st -> getBase st
                DisplayPost st -> getBase st <> "/" <> showInt (getN st)
+               DisplayAllCategories -> "categories"
+               DisplayCategory slug slugId _ _ -> "c/" <> slug <> "/" <> showInt slugId
 
       getBase st = "t/" <> st ^. stSlug <> "/" <> showInt (st ^. stId)
 
@@ -726,7 +857,7 @@ handleTuiEvent' (TuiState _ _ burl to (DS ds)) (VtyEvent (EvKey (KChar 'v') _)) 
 --
 -- Unfortunately my WM seams to eat up the pgup/down/home/end key presses.
 --
-handleTuiEvent' (TuiState _ _ _ _ (DS (DisplayPost _))) (VtyEvent (EvKey k [MShift]))
+handleTuiEvent' (TuiState _ _ _ _ _ (DS (DisplayPost _))) (VtyEvent (EvKey k [MShift]))
   = let vp = viewportScroll SinglePostView
 
     in case k of
@@ -740,7 +871,7 @@ handleTuiEvent' (TuiState _ _ _ _ (DS (DisplayPost _))) (VtyEvent (EvKey k [MShi
           _ -> pure ()
         
 
-handleTuiEvent' (TuiState ct tl burl to (DS (DisplayPost posts))) (VtyEvent (EvKey k _)) | k `elem` [KUp, KDown]
+handleTuiEvent' (TuiState ct tl cl burl to (DS (DisplayPost posts))) (VtyEvent (EvKey k _)) | k `elem` [KUp, KDown]
   = let -- If we didn't want to make up always go backwards in time
         -- then we could just check on k.
         step = case (k, to) of
@@ -751,23 +882,42 @@ handleTuiEvent' (TuiState ct tl burl to (DS (DisplayPost posts))) (VtyEvent (EvK
         nlist = WL.listMoveBy step (posts ^. stList)
         nposts = posts & stList .~ nlist
 
-    in put (TuiState ct tl burl to (DS (DisplayPost nposts)))
+    in put (TuiState ct tl cl burl to (DS (DisplayPost nposts)))
 
 
 -- Selecting an item means we need to download the posts for that item.
 --
-handleTuiEvent' tui@(TuiState _ tl burl to (DS DisplayAllTopics)) (VtyEvent (EvKey KRight _)) = do
+handleTuiEvent' tui@(TuiState _ tl cl burl to (DS DisplayAllTopics)) (VtyEvent (EvKey KRight _)) = do
   st <- liftIO $ getPosts tui
   
   let ndisplay = if st ^. stNumPosts == 1 then DisplayPost st else DisplayTopic st
 
   nct <- liftIO getCurrentTime
-  put (TuiState nct tl burl to (DS ndisplay))
+  put (TuiState nct tl cl burl to (DS ndisplay))
 
 
-handleTuiEvent' (TuiState _ tl burl to (DS (DisplayTopic st))) (VtyEvent (EvKey KRight _)) = do
+-- When can we view the categories? For the moment just in the all-display, but
+-- this could be anytime.
+--
+handleTuiEvent' (TuiState _ tl cl burl to (DS DisplayAllTopics)) (VtyEvent (EvKey (KChar 'c') _)) = do
   nct <- liftIO getCurrentTime
-  put (TuiState nct tl burl to (DS (DisplayPost st)))
+  put (TuiState nct tl cl burl to (DS DisplayAllCategories))
+
+
+handleTuiEvent' (TuiState _ tl cl burl to (DS DisplayAllCategories)) (VtyEvent (EvKey KLeft _)) = do
+  nct <- liftIO getCurrentTime
+  put (TuiState nct tl cl burl to (DS DisplayAllTopics))
+
+
+handleTuiEvent' tui@(TuiState _ tl cl burl to (DS DisplayAllCategories)) (VtyEvent (EvKey KRight _)) = do
+  nct <- liftIO getCurrentTime
+  (slug, slugId, name, ntl) <- liftIO $ getCategory nct tui
+  put (TuiState nct tl cl burl to (DS (DisplayCategory slug slugId name ntl)))
+
+
+handleTuiEvent' (TuiState _ tl cl burl to (DS (DisplayTopic st))) (VtyEvent (EvKey KRight _)) = do
+  nct <- liftIO getCurrentTime
+  put (TuiState nct tl cl burl to (DS (DisplayPost st)))
 
 
 -- Left out of a post takes us to the topic UNLESS it's a single-post topic
@@ -775,19 +925,19 @@ handleTuiEvent' (TuiState _ tl burl to (DS (DisplayTopic st))) (VtyEvent (EvKey 
 -- to DisplayAllTopics **but** we know we don't have that case here as
 -- there's only 1 post.
 --
-handleTuiEvent' (TuiState _ tl burl to (DS (DisplayPost st))) (VtyEvent (EvKey KLeft  _)) = do
+handleTuiEvent' (TuiState _ tl cl burl to (DS (DisplayPost st))) (VtyEvent (EvKey KLeft  _)) = do
   let ndisplay = if st ^. stNumPosts == 1
                  then DisplayAllTopics
                  else DisplayTopic st
                      
   nct <- liftIO getCurrentTime
-  put (TuiState nct tl burl to (DS ndisplay))
+  put (TuiState nct tl cl burl to (DS ndisplay))
 
 
 -- Left out of a topic takes us to the topic list and removes and
 -- outstanding downloads. We could just let them finish.
 --
-handleTuiEvent' (TuiState _ tl burl to (DS (DisplayTopic st))) (VtyEvent (EvKey KLeft  _)) = do
+handleTuiEvent' (TuiState _ tl cl burl to (DS (DisplayTopic st))) (VtyEvent (EvKey KLeft  _)) = do
 
   -- TODO: is this correct?
   --
@@ -798,19 +948,30 @@ handleTuiEvent' (TuiState _ tl burl to (DS (DisplayTopic st))) (VtyEvent (EvKey 
                           unless flag (killThread (dl ^. edTID)))
   
   nct <- liftIO getCurrentTime
-  put (TuiState nct tl burl to (DS DisplayAllTopics))
+  put (TuiState nct tl cl burl to (DS DisplayAllTopics))
+
+
+handleTuiEvent' (TuiState _ tl cl burl to (DS (DisplayCategory {}))) (VtyEvent (EvKey KLeft _)) = do
+  nct <- liftIO getCurrentTime
+  put (TuiState nct tl cl burl to (DS DisplayAllCategories))
 
 
 -- Should we update the time in these cases? It would make the display
 -- "reactive", but it also might be confusing when scrolling to see
 -- the times change.
 --
-handleTuiEvent' tui@(TuiState _ _ _ _ (DS (DisplayTopic st))) ev
+handleTuiEvent' tui@(TuiState _ _ _ _ _ (DS (DisplayTopic st))) ev
   = let list = st ^. stList
     in scrollHandler (\x -> tui & displayState .~ DS (DisplayTopic (st & stList .~ x))) list ev
 
-handleTuiEvent' tui@(TuiState _ tl _ _ (DS DisplayAllTopics)) ev
+handleTuiEvent' tui@(TuiState _ tl _ _ _ (DS DisplayAllTopics)) ev
     = scrollHandler (\x -> tui & topicList .~ x) tl ev
+
+handleTuiEvent' tui@(TuiState _ _ _ _ _ (DS (DisplayCategory slug slugId name tl))) ev
+  = scrollHandler (\x -> tui & displayState .~ DS (DisplayCategory slug slugId name x)) tl ev
+
+handleTuiEvent' tui@(TuiState _ _ cats _ _ (DS DisplayAllCategories)) ev
+    = scrollHandler (\x -> tui & categoryList .~ x) cats ev
 
        
 -- nothing else to do so update the time
