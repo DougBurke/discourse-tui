@@ -8,6 +8,7 @@ module Types (TuiState(..)
              , currentTime
              , topicList
              , categoryList
+             , categoryMap
              , baseURL
              , timeOrder
              , displayState
@@ -89,6 +90,7 @@ module Types (TuiState(..)
              , initDisplayState
              ) where
 
+import qualified Data.IntMap.Strict as M
 import qualified Data.Text as T
 import qualified Data.Vector as V
 
@@ -399,6 +401,7 @@ data TuiState =
   { _currentTime :: UTCTime
   , _topicList :: TopicList
   , _categoryList :: CategoryList
+  , _categoryMap :: M.IntMap Category
   , _baseURL :: String
   , _timeOrder :: TimeOrder
   , _displayState :: DisplayState
@@ -421,6 +424,8 @@ data Display =
   | DisplayPost SingleTopic
   | DisplayAllCategories
   | DisplayCategory Slug Int T.Text TopicList
+  | DisplayCategoryTopic Slug Int T.Text TopicList SingleTopic
+  | DisplayCategoryPost Slug Int T.Text TopicList SingleTopic
   -- deriving Eq
 
 
