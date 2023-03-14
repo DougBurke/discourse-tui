@@ -45,7 +45,6 @@ import Control.Monad.IO.Class (liftIO)
 
 import Data.Bifunctor (bimap)
 import Data.List (intercalate, foldl')
-import Data.Maybe (isJust)
 import Data.Time (UTCTime, diffUTCTime, getCurrentTime)
 
 import Graphics.Vty.Input.Events (Event(..), Key(..), Modifier(MShift))
@@ -247,15 +246,23 @@ withAttrName :: String -> Widget n -> Widget n
 withAttrName n = withAttr (attrName n)
 
 
-helpBar :: Maybe TimeOrder -> Bool -> Widget ResourceName
-helpBar Nothing _ = withAttrName "bar" (txt helpBase)
-helpBar (Just order) True = withAttrName "bar" widget
+helpBar :: UTCTime -> Maybe TimeOrder -> Maybe ExtraDownload -> Widget ResourceName
+helpBar _ Nothing _ = withAttrName "bar" (txt helpBase)
+helpBar time (Just order) (Just ed) = withAttrName "bar" widget
   where
     widget = txt helpBase <+> downloading <+> dirMsg
     dirMsg = padLeft Max $ txt (showOrder order)
-    downloading = hCenter (txt "... downloading ...")
+    downloading = hCenter (txt ("downloading: " <>
+                                showInt (ed ^. edRunning) <>
+                                "/" <>
+                                showInt (V.length (ed ^. edToDo)) <>
+                                " (" <> showTimeDelta (ed ^. edTime) time <>
+                                ")"
+                               )
+                          )
 
-helpBar (Just order) False = withAttrName "bar" widget
+
+helpBar _ (Just order) Nothing = withAttrName "bar" widget
   where
     widget = txt helpBase <+> dirMsg
     dirMsg = padLeft Max $ txt (showOrder order)
@@ -321,8 +328,8 @@ getExtraPosts _ ids | V.null ids = pure Nothing
 getExtraPosts baseUrl ids = do
   let (now, later) = V.splitAt 20 ids
 
-      getChunk xs = do
-        let qry = map (\x -> ("post_ids[]", toN x)) (V.toList xs)
+      getChunk = do
+        let qry = map (\x -> ("post_ids[]", toN x)) (V.toList now)
             toN = Just . B.pack . show
         req <- parseRequest baseUrl
         let req' = setRequestQueryString qry req
@@ -330,11 +337,12 @@ getExtraPosts baseUrl ids = do
         pure (rsp ^. postSelList)
 
   mvar <- newEmptyMVar
+  stime <- getCurrentTime
   tid <- forkIO $ do
-    posts' <- getChunk now >>= mapM postToPandoc >>= evaluate
+    posts' <- getChunk >>= mapM postToPandoc >>= evaluate
     putMVar mvar posts'
 
-  pure . Just $ toExtraDownload later mvar tid
+  pure . Just $ toExtraDownload stime (V.length now) later mvar tid
 
 
 postToPandoc :: Post -> IO Post
@@ -461,7 +469,7 @@ displayAllTopics :: T.Text -> UTCTime -> TopicList -> [Widget ResourceName]
 displayAllTopics lbl time topics =
   [labelledLine ("Topics : " <> lbl) <=>
    WL.renderList drawTopic True topics <=>
-   helpBar Nothing False]
+   helpBar time Nothing Nothing]
     where
         drawTopic selected tpc
           = (if tpc ^. pinned then withAttrName "pinned" else id)
@@ -514,7 +522,7 @@ displayCategories :: UTCTime -> CategoryList -> [Widget ResourceName]
 displayCategories time cats =
   [labelledLine "Categories" <=>
    WL.renderList drawCategory True cats <=>
-   helpBar Nothing False]
+   helpBar time Nothing Nothing]
     where
         drawCategory selected cat
           = (catId selected cat <+>
@@ -571,7 +579,7 @@ displayTopic :: UTCTime -> SingleTopic -> TimeOrder -> [Widget ResourceName]
 displayTopic time st order
     = [labelledLine ("Post : " <> st ^. stTitle)
        <=> WL.renderList drawPost True posts'
-       <=> helpBar (Just order) (isJust (st ^. stDownload))]
+       <=> helpBar time (Just order) (st ^. stDownload)]
     where
         allPosts = st ^. stList
         posts' = orderSelect order allPosts
@@ -859,6 +867,9 @@ handleTuiEvent e = do
   --
   let isDownloading (DisplayTopic st) = checkDownload DisplayTopic st
       isDownloading (DisplayPost st) = checkDownload DisplayPost st
+      -- What to do about the category cases?
+      isDownloading (DisplayCategoryTopic a b c d st) = checkDownload (DisplayCategoryTopic a b c d) st
+      isDownloading (DisplayCategoryPost a b c d st) = checkDownload (DisplayCategoryPost a b c d) st
       isDownloading _ = Nothing
 
       checkDownload dt st = case st ^. stDownload of

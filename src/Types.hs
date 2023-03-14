@@ -70,6 +70,8 @@ module Types (TuiState(..)
              , userName
              , ExtraDownload
              , toExtraDownload
+             , edTime
+             , edRunning
              , edToDo
              , edQuery
              , edTID
@@ -356,12 +358,20 @@ data TimeOrder = Decreasing | Increasing
 
 
 data ExtraDownload = ED
-  { _edToDo :: V.Vector Int
+  { _edTime :: UTCTime  -- time the query started, approximately
+  , _edRunning :: Int   -- the number of posts being queried
+  , _edToDo :: V.Vector Int
   , _edQuery :: MVar (V.Vector Post)
   , _edTID :: ThreadId
   }
 
-toExtraDownload :: V.Vector Int -> MVar (V.Vector Post) -> ThreadId -> ExtraDownload
+toExtraDownload ::
+  UTCTime
+  -> Int
+  -> V.Vector Int
+  -> MVar (V.Vector Post)
+  -> ThreadId
+  -> ExtraDownload
 toExtraDownload = ED
 
 data SingleTopic = SingleTopic
