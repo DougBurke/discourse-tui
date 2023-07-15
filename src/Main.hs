@@ -342,7 +342,7 @@ getExtraPosts baseUrl ids = do
     posts' <- getChunk >>= mapM postToPandoc >>= evaluate
     putMVar mvar posts'
 
-  pure . Just $ toExtraDownload stime (V.length now) later mvar tid
+  pure . Just $ toExtraDownload stime baseUrl (V.length now) later mvar tid
 
 
 postToPandoc :: Post -> IO Post
@@ -765,12 +765,7 @@ downloadTuiEvent ct tl cl cmap burl to dt st ed = do
     Nothing -> pure ()
     Just nposts -> do
 
-      -- Recreating the URL is not great; we should have set up a constructor to
-      -- hide this logic.
-      --
-      let Just selectedTopicID = view (_2 . topicId) <$> WL.listSelectedElement tl
-          extraURL = mconcat [burl, "t/", show selectedTopicID, "/posts.json"]
-      ned <- liftIO (getExtraPosts extraURL (ed ^. edToDo))
+      ned <- liftIO (getExtraPosts (ed ^. edBaseUrl) (ed ^. edToDo))
 
       let nlist = addToList (st ^. stList) nposts
           nst = st & stList .~ nlist & stDownload .~ ned

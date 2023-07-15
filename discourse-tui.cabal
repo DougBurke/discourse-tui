@@ -13,7 +13,7 @@ name:                discourse-tui
 -- PVP summary:      +-+------- breaking API changes
 --                   | | +----- non-breaking API additions
 --                   | | | +--- code changes with no API change
-version:             0.3.0.0
+version:             0.3.1.0
 
 -- A short (one-line) description of the package.
 synopsis:            A terminal user interface for discourse
@@ -58,7 +58,7 @@ executable discourse-tui
 
   -- Other library packages from which modules are imported.
   build-depends:       base,
-                       brick >= 1.0 && < 1.6,
+                       brick >= 1.0 && < 2.0,
                        cursor,
                        aeson,
                        http-conduit,
