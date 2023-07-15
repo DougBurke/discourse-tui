@@ -71,6 +71,7 @@ module Types (TuiState(..)
              , ExtraDownload
              , toExtraDownload
              , edTime
+             , edBaseUrl
              , edRunning
              , edToDo
              , edQuery
@@ -359,6 +360,7 @@ data TimeOrder = Decreasing | Increasing
 
 data ExtraDownload = ED
   { _edTime :: UTCTime  -- time the query started, approximately
+  , _edBaseUrl :: String -- the URL to query (once the list of posts are attached)
   , _edRunning :: Int   -- the number of posts being queried
   , _edToDo :: V.Vector Int
   , _edQuery :: MVar (V.Vector Post)
@@ -367,6 +369,7 @@ data ExtraDownload = ED
 
 toExtraDownload ::
   UTCTime
+  -> String
   -> Int
   -> V.Vector Int
   -> MVar (V.Vector Post)
