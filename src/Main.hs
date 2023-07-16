@@ -179,6 +179,7 @@ parseArgs = do
     when ("--help" `elem` args) (die (helpMessage aliases))
     when ("--version" `elem` args) (die versionMessage)
     case args of
+      ['-':rest] -> die ("Unknown option: -" <> rest)
       [x] -> pure (checkArg aliases x)
       _ -> die (helpMessage aliases)
 
