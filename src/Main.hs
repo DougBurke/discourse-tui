@@ -59,7 +59,8 @@ import System.Exit (die)
 import System.Process (spawnProcess)
 import Text.Pandoc (runIO, def, handleError, readHtml, writeCommonMark)
 
-import PackageInfo_discourse_tui (version)
+-- import PackageInfo_discourse_tui (version)
+import Paths_discourse_tui (version)
 import Types
 
 -- Change a protoTopic into a topic by consulting userMap and catagoryMap.
