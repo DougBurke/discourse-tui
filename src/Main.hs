@@ -46,6 +46,7 @@ import Control.Monad.IO.Class (liftIO)
 import Data.Bifunctor (bimap)
 import Data.List (intercalate, foldl')
 import Data.Time (UTCTime, diffUTCTime, getCurrentTime)
+import Data.Version (showVersion)
 
 import Graphics.Vty.Input.Events (Event(..), Key(..), Modifier(MShift))
 import Graphics.Vty.Attributes (blue, bold, defAttr, dim, green, reverseVideo, withStyle, cyan, yellow)
@@ -58,6 +59,7 @@ import System.Exit (die)
 import System.Process (spawnProcess)
 import Text.Pandoc (runIO, def, handleError, readHtml, writeCommonMark)
 
+import PackageInfo_discourse_tui (version)
 import Types
 
 -- Change a protoTopic into a topic by consulting userMap and catagoryMap.
@@ -90,7 +92,9 @@ helpMessage (Aliases aliases) =
       convert (k, v) = "  " <> k <> ": " <> v
 
   in intercalate "\n"
-     ([ "Usage: discourse-tui url|fragment"
+     ([ "Usage:   discourse-tui url|fragment"
+      , "options: --help | --version"
+      , "version: " <> showVersion version
       , ""
       , "where fragment (no . character) is taken to mean https://discource.fragment.org,"
       , "or the full URL is given. So either:"
@@ -108,6 +112,10 @@ helpMessage (Aliases aliases) =
       ] <> alines)
 
 
+versionMessage :: String
+versionMessage = showVersion version
+
+
 -- Not worth a map yet
 
 newtype Aliases = Aliases [(String, String)]
@@ -116,6 +124,12 @@ newtype Aliases = Aliases [(String, String)]
 -- Read the aliases from the XDG_CONFIG_HOME / "discourse-tui" / "aliases"
 -- or return the default (empty list) if not set.
 --
+aliasPath :: IO String
+aliasPath = do
+  base <- getXdgDirectory XdgConfig "discourse-tui"
+  pure (base <> "/" <> "aliases")
+
+
 readAliases :: IO Aliases
 readAliases = catch _read errHandler
   where
@@ -123,8 +137,7 @@ readAliases = catch _read errHandler
     errHandler _ = pure mempty
 
     _read = do
-      base <- getXdgDirectory XdgConfig "discourse-tui"
-      let filename = base <> "/" <> "aliases"
+      filename <- aliasPath
       getAliases <$> readFile filename
 
 
@@ -164,6 +177,7 @@ parseArgs = do
     aliases <- readAliases
     args <- getArgs
     when ("--help" `elem` args) (die (helpMessage aliases))
+    when ("--version" `elem` args) (die versionMessage)
     case args of
       [x] -> pure (checkArg aliases x)
       _ -> die (helpMessage aliases)

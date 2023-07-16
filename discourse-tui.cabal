@@ -13,7 +13,7 @@ name:                discourse-tui
 -- PVP summary:      +-+------- breaking API changes
 --                   | | +----- non-breaking API additions
 --                   | | | +--- code changes with no API change
-version:             0.3.1.0
+version:             0.3.1.1
 
 -- A short (one-line) description of the package.
 synopsis:            A terminal user interface for discourse
@@ -54,7 +54,8 @@ executable discourse-tui
   main-is:             Main.hs
 
   -- Modules included in this executable, other than Main.
-  other-modules:       Types
+  other-modules:       PackageInfo_discourse_tui
+                       Types
 
   -- Other library packages from which modules are imported.
   build-depends:       base,
