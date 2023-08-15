@@ -211,6 +211,11 @@ instance FromJSON PostSelectedResponse where
         posts' <- postStream .: "posts"
         pure $ PostSelectedResponse posts'
 
+-- There are some posts which do things like mark the topic as pinned,
+-- which have no informational content. Should we just skip them? For
+-- now we include the action_code label (potentially in a "nice"
+-- form).
+--
 instance FromJSON Post where
     parseJSON = withObject "Post" $ \v -> do
         id' <- v .: "id"
@@ -232,7 +237,29 @@ instance FromJSON Post where
         let count = if null actions
                     then 0
                     else _count (V.unsafeHead actions)
-        pure $ Post id' postNumber' username' createdAt' cooked' count
+
+        let out txt = Post id' postNumber' username' createdAt' txt count
+
+        -- If this is just a "pinned globally" message then would like to skip it but
+        -- let's just encode the action.
+        --
+        maction_code <- v .:? "action_code"
+        case maction_code of
+          Just action_code -> let lbl = makeActionLabel action_code
+                              in if T.null cooked'
+                                 then pure (out lbl)
+                                 else pure (out (cooked' <> "\n\n" <> lbl))
+          _ -> pure (out cooked')
+
+
+-- Do not know all the actions that can be done, so treat them manually
+-- as we come across them.
+--
+makeActionLabel :: T.Text -> T.Text
+makeActionLabel "pinned_globally.enabled" = "Pinned globally"
+makeActionLabel "closed.enabled" = "Closed"
+makeActionLabel action = "Action: " <> action
+
 
 instance FromJSON Action where
     parseJSON = withObject "Action" $ \v ->
