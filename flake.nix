@@ -31,7 +31,10 @@
             cabal-install
           ];
         # Change the prompt to show that you are in a devShell
-        shellHook = "export PS1='\\e[1;34mdev > \\e[0m'";
+        shellHook = ''
+  echo -e "*** \e[1;32mWelcome to discourse-tui\e[0m ***"
+  export PS1='discourse-tui:\A \e[1;34m\w\e[0m '
+	'';
         });
   };
 }
