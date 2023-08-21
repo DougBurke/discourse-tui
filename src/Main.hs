@@ -13,6 +13,11 @@ import qualified Data.Text as T
 import qualified Data.Text.Lazy as LT
 import qualified Data.Vector as V
 
+import qualified System.Info as SI
+
+-- import qualified PackageInfo_discourse_tui as P
+import qualified Paths_discourse_tui as P
+
 import qualified Formatting as F
 import qualified Formatting.Time as FT
 
@@ -54,13 +59,11 @@ import Graphics.Vty.Attributes (blue, bold, defAttr, dim, green, reverseVideo, w
 import Network.HTTP.Simple (getResponseBody, httpJSON, parseRequest, setRequestQueryString)
 
 import System.Directory (XdgDirectory(XdgConfig), getXdgDirectory)
-import System.Environment (getArgs)
-import System.Exit (die)
+import System.Environment (getArgs, getProgName)
+import System.Exit (die, exitFailure)
 import System.Process (spawnProcess)
 import Text.Pandoc (runIO, def, handleError, readHtml, writeCommonMark)
 
--- import PackageInfo_discourse_tui (version)
-import Paths_discourse_tui (version)
 import Types
 
 -- Change a protoTopic into a topic by consulting userMap and catagoryMap.
@@ -95,7 +98,7 @@ helpMessage (Aliases aliases) =
   in intercalate "\n"
      ([ "Usage:   discourse-tui url|fragment"
       , "options: --help | --version"
-      , "version: " <> showVersion version
+      , "version: " <> showVersion P.version
       , ""
       , "where fragment (no . character) is taken to mean https://discource.fragment.org,"
       , "or the full URL is given. So either:"
@@ -113,8 +116,13 @@ helpMessage (Aliases aliases) =
       ] <> alines)
 
 
-versionMessage :: String
-versionMessage = showVersion version
+reportVersion :: IO ()
+reportVersion = do
+  name <- getProgName
+  putStrLn (name <> ": v" <> showVersion P.version <> " (" <>
+           SI.compilerName <> " " <> showVersion SI.fullCompilerVersion <>
+           " " <> SI.os <> " " <> SI.arch <> ")")
+  exitFailure
 
 
 -- Not worth a map yet
@@ -178,7 +186,7 @@ parseArgs = do
     aliases <- readAliases
     args <- getArgs
     when ("--help" `elem` args) (die (helpMessage aliases))
-    when ("--version" `elem` args) (die versionMessage)
+    when ("--version" `elem` args) reportVersion
     case args of
       ['-':rest] -> die ("Unknown option: -" <> rest)
       [x] -> pure (checkArg aliases x)
