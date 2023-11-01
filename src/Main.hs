@@ -100,10 +100,10 @@ helpMessage (Aliases aliases) =
       , "options: --help | --version"
       , "version: " <> showVersion P.version
       , ""
-      , "where fragment (no . character) is taken to mean https://discource.fragment.org,"
+      , "where fragment (no . character) is taken to mean https://discourse.fragment.org,"
       , "or the full URL is given. So either:"
       , ""
-      , "     discource-tui haskell"
+      , "     discourse-tui haskell"
       , "     discourse-tui https://discourse.haskell.org"
       , ""
       , "Aliases can be stored in a file called aliases in the directory"
