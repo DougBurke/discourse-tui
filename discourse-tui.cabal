@@ -38,7 +38,7 @@ executable discourse-tui
   autogen-modules:     Paths_discourse_tui
 
   build-depends:       base,
-                       brick >= 1.0 && < 2.0,
+                       brick >= 1.0 && < 2.1,
                        cursor,
                        aeson,
                        http-conduit,
@@ -49,7 +49,7 @@ executable discourse-tui
                        text,
                        lens,
                        directory >= 1.2.3,
-                       bytestring >= 0.10 && < 0.12,
+                       bytestring >= 0.10 && < 0.13,
                        formatting >= 7.1 && < 7.3,
                        process == 1.6.*,
                        time >= 1.9 && < 1.13
