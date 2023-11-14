@@ -285,7 +285,7 @@ data TopicResponse = TopicResponse
     } deriving (Show)
 
 topicHeight :: Int
-topicHeight = 4
+topicHeight = 3
 
 data ProtoTopic = ProtoTopic
     {

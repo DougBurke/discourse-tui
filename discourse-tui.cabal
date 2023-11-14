@@ -8,7 +8,7 @@ name:                discourse-tui
 -- PVP summary:      +-+------- breaking API changes
 --                   | | +----- non-breaking API additions
 --                   | | | +--- code changes with no API change
-version:             0.4.1.0
+version:             0.4.2.0
 
 synopsis:            A terminal user interface for discourse
 
@@ -38,7 +38,7 @@ executable discourse-tui
   autogen-modules:     Paths_discourse_tui
 
   build-depends:       base,
-                       brick >= 1.0 && < 2.1,
+                       brick >= 1.0 && < 2.2,
                        cursor,
                        aeson,
                        http-conduit,
