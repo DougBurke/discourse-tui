@@ -21,7 +21,10 @@ import qualified Paths_discourse_tui as P
 import qualified Formatting as F
 import qualified Formatting.Time as FT
 
-import Brick (BrickEvent(..), App(..), EventM, Padding(..), ViewportType(Vertical), Widget,
+import Brick (BrickEvent(..), App(..), EventM, Padding(..),
+              ViewportType(Vertical),
+              VScrollBarOrientation(OnRight),
+              Widget,
               Direction(..),
               nestEventM', attrName, get, put,
               (<=>), (<+>),
@@ -34,6 +37,7 @@ import Brick (BrickEvent(..), App(..), EventM, Padding(..), ViewportType(Vertica
               viewport, viewportScroll,
               vScrollBy, vScrollToBeginning, vScrollToEnd, vScrollPage,
               vLimit, emptyWidget,
+              withVScrollBars,
               withAttr)
 import Brick.Main (halt)
 import Brick.Widgets.Border (hBorder, hBorderAttr)
@@ -669,10 +673,11 @@ showSelectedPost tNow order allPosts =
           -- Can we identify when the contents exceed the viewport
           -- so we can add some decoration?
           --
-          contents' = viewport SinglePostView Vertical (txtWrap $ thisPost ^. contents)
+          contents' = viewport SinglePostView Vertical
+                      (txtWrap $ thisPost ^. contents)
 
       in withAttrName "OP" topBar
-         <=> padBottom Max contents'
+         <=> padBottom Max (withVScrollBars OnRight contents')
          <=> helpPostBar order (ctr + 1) nPosts
 
     Nothing -> txt "something went wrong"
