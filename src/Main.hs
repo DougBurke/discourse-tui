@@ -22,7 +22,8 @@ import qualified Formatting as F
 import qualified Formatting.Time as FT
 
 import Brick (BrickEvent(..), App(..), EventM, Padding(..),
-              ViewportType(Vertical),
+              ViewportType(Both),
+              HScrollBarOrientation(OnBottom),
               VScrollBarOrientation(OnRight),
               Widget,
               Direction(..),
@@ -36,8 +37,9 @@ import Brick (BrickEvent(..), App(..), EventM, Padding(..),
               txt, txtWrap,
               viewport, viewportScroll,
               vScrollBy, vScrollToBeginning, vScrollToEnd, vScrollPage,
+              hScrollBy,
               vLimit, emptyWidget,
-              withVScrollBars,
+              withHScrollBars, withVScrollBars,
               withAttr)
 import Brick.Main (halt)
 import Brick.Widgets.Border (hBorder, hBorderAttr)
@@ -230,7 +232,7 @@ makeCategoryMap resp =
                tokenize categoryId subCatList
 
       catList = resp ^. categories
-      cats = WL.list Categories catList topicHeight
+      cats = WL.list Categories catList 3  -- (this is minimum height)
 
       -- Pull out the subcategories *AND* convert them to categories
       -- so that categoryMap works.
@@ -252,7 +254,7 @@ processTopics baseUrl now (catMap, cats) tps =
       userMap = tokenize userId users
 
       topList = V.map (parseTopic userMap catMap) (tps ^. tpTopicList)
-      topics = WL.list Contents topList topicHeight
+      topics = WL.list Contents topList 3
 
   in TuiState {
     _currentTime = now
@@ -348,7 +350,7 @@ getPosts tui tl = do
         nposts = V.length (pr ^. postIds)
 
     mExtra <- getExtraPosts extraURL extraIds
-    pure $ toSingleTopic (pr ^. postResponseId) nposts (pr ^. postSlug) (pr ^. postTitle) (WL.list Posts basePosts 10) mExtra
+    pure $ toSingleTopic (pr ^. postResponseId) nposts (pr ^. postSlug) (pr ^. postTitle) (WL.list Posts basePosts 8) mExtra
 
 
 getExtraPosts :: String -> V.Vector Int -> IO (Maybe ExtraDownload)
@@ -673,11 +675,15 @@ showSelectedPost tNow order allPosts =
           -- Can we identify when the contents exceed the viewport
           -- so we can add some decoration?
           --
-          contents' = viewport SinglePostView Vertical
-                      (txtWrap $ thisPost ^. contents)
+          contents' = viewport SinglePostView Both
+                      (txt $ thisPost ^. contents)
+                      -- (txtWrap $ thisPost ^. contents)
+
+          addScroll = withHScrollBars OnBottom .
+                      withVScrollBars OnRight
 
       in withAttrName "OP" topBar
-         <=> padBottom Max (withVScrollBars OnRight contents')
+         <=> padBottom Max (addScroll contents')
          <=> helpPostBar order (ctr + 1) nPosts
 
     Nothing -> txt "something went wrong"
@@ -992,6 +998,10 @@ handleTuiEvent' tui (VtyEvent (EvKey k [MShift]))
           in case k of
             KUp -> vScrollBy vp (-1)
             KDown -> vScrollBy vp 1
+
+            KRight -> hScrollBy vp 1
+            KLeft -> hScrollBy vp (-1)
+
             -- gargh - not getting the following to work ...
             KPageUp -> vScrollPage vp Up
             KPageDown -> vScrollPage vp Down

@@ -87,7 +87,6 @@ module Types (TuiState(..)
              , TimeOrder(..)
              , ResourceName(..)
              , Slug
-             , topicHeight
              , DisplayState(..)
              , Display(..)
              , initDisplayState
@@ -283,9 +282,6 @@ data TopicResponse = TopicResponse
     _tpUsers :: V.Vector User,
     _tpTopicList :: V.Vector ProtoTopic
     } deriving (Show)
-
-topicHeight :: Int
-topicHeight = 3
 
 data ProtoTopic = ProtoTopic
     {
