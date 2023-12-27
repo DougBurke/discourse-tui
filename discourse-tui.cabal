@@ -38,7 +38,7 @@ executable discourse-tui
   autogen-modules:     Paths_discourse_tui
 
   build-depends:       base,
-                       brick >= 1.0 && < 2.2,
+                       brick >= 2.0 && < 2.4,
                        cursor,
                        aeson,
                        http-conduit,

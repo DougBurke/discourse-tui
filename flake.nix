@@ -33,6 +33,10 @@
         # Change the prompt to show that you are in a devShell
         shellHook = ''
   echo -e "*** \e[1;32mWelcome to discourse-tui\e[0m ***"
+  ghc --version
+  cabal --version
+  hlint --version
+  echo ""
   export PS1='discourse-tui:\A \e[1;34m\w\e[0m '
 	'';
         });
