@@ -38,7 +38,7 @@ import Brick (BrickEvent(..), App(..), EventM, Padding(..),
               viewport, viewportScroll,
               vScrollBy, vScrollToBeginning, vScrollToEnd, vScrollPage,
               hScrollBy,
-              vLimit, emptyWidget,
+              emptyWidget,
               withHScrollBars, withVScrollBars,
               withAttr)
 import Brick.Main (halt)
@@ -232,7 +232,7 @@ makeCategoryMap resp =
                tokenize categoryId subCatList
 
       catList = resp ^. categories
-      cats = WL.list Categories catList 3  -- (this is minimum height)
+      cats = WL.list Categories catList 1
 
       -- Pull out the subcategories *AND* convert them to categories
       -- so that categoryMap works.
@@ -350,7 +350,7 @@ getPosts tui tl = do
         nposts = V.length (pr ^. postIds)
 
     mExtra <- getExtraPosts extraURL extraIds
-    pure $ toSingleTopic (pr ^. postResponseId) nposts (pr ^. postSlug) (pr ^. postTitle) (WL.list Posts basePosts 8) mExtra
+    pure $ toSingleTopic (pr ^. postResponseId) nposts (pr ^. postSlug) (pr ^. postTitle) (WL.list Posts basePosts 1) mExtra
 
 
 getExtraPosts :: String -> V.Vector Int -> IO (Maybe ExtraDownload)
@@ -551,51 +551,58 @@ displayAllTopics lbl time topics =
 displayCategories :: UTCTime -> CategoryList -> [Widget ResourceName]
 displayCategories time cats =
   [labelledLine "Categories" <=>
+   renderCategory <=>
    WL.renderList drawCategory True cats <=>
    helpBar time Nothing Nothing]
     where
-        drawCategory selected cat
-          = (catId selected cat <+>
-             ((catName cat <+> padLeft Max (nums cat)) <=>
-              txtWrap (cat ^. categoryDesc) <=>
-               subCats cat)) <=>
-            dimHorizontal
+      renderCategory = case snd <$> WL.listSelectedElement cats of
+        Just cat ->
+          padBottom Max (txtWrap (cat ^. categoryDesc)
+                         <=> subCats cat
+                         <=> dimHorizontal)
 
-        hSize = 4
+        Nothing -> emptyWidget
+        
+      drawCategory selected cat
+        = catId selected cat
+          <+> catName cat
+          <+> padLeft Max (nums cat)
 
-        catId selected cat =
-          let shower = if selected then withAttrName "selected" else id
-          in shower
-             . padRight (Pad 1)
-             . hLimit hSize
-             . padRight Max
-             . txt
-             . showInt
-             $ cat ^. categoryId
+      hSize = 4
+  
+      catId selected cat =
+        let shower = if selected then withAttrName "selected" else id
+        in shower
+           . padRight (Pad 1)
+           . hLimit hSize
+           . padRight Max
+           . txt
+           . showInt
+           $ cat ^. categoryId
 
-        catName cat = withAttrName "title" (txt (cat ^. categoryName))
-        nums cat =
-          countLabel "posts" (cat ^. categoryNPost) <+>
-          padLeft (Pad 1) (countLabel "topics" (cat ^. categoryNTopic))
+      catName cat = withAttrName "title" (txt (cat ^. categoryName))
+      nums cat =
+        countLabel "posts" (cat ^. categoryNPost) <+>
+        padLeft (Pad 1) (countLabel "topics" (cat ^. categoryNTopic))
 
-        subCats cat =
-          let subs = zip [1..] (V.toList (cat ^. subCategoryList))
+      subCats cat =
+        let subs = zip [1..] (V.toList (cat ^. subCategoryList))
 
-              addDesc scat = case scat ^. subcategoryDesc of
-                Just desc -> padLeft (Pad 4) (txt desc)
-                Nothing -> emptyWidget
+            addDesc scat = case scat ^. subcategoryDesc of
+              Just desc -> padLeft (Pad 4) (txt desc)
+              Nothing -> emptyWidget
 
-              showSub (i, scat) =
-                let l1 = padLeft (Pad 2) (txt (showInt i)) <+>
-                         txt " " <+>
-                         txt (scat ^. subcategoryName)
-                    l2 = addDesc scat
-                in l1 <=> l2
+            showSub (i, scat) =
+              let l1 = padLeft (Pad 2) (txt (showInt i)) <+>
+                       txt " " <+>
+                       txt (scat ^. subcategoryName)
+                  l2 = addDesc scat
+              in l1 <=> l2
 
-              processed = map showSub subs
-              out = foldl' (<=>) emptyWidget processed
+            processed = map showSub subs
+            out = foldl' (<=>) emptyWidget processed
               
-          in (if null subs then emptyWidget else txt " ") <=> out
+        in (if null subs then emptyWidget else txt " ") <=> out
 
 
 countLabel :: T.Text -> Int -> Widget ResourceName
@@ -608,18 +615,36 @@ countLabel lbl n =
 displayTopic :: UTCTime -> SingleTopic -> TimeOrder -> [Widget ResourceName]
 displayTopic time st order
     = [labelledLine ("Post : " <> st ^. stTitle)
+       <=> selectedPost
        <=> WL.renderList drawPost True posts'
        <=> helpBar time (Just order) (st ^. stDownload)]
     where
         allPosts = st ^. stList
         posts' = orderSelect order allPosts
 
+        selectedPost = case snd <$> WL.listSelectedElement allPosts of
+          Just post ->
+            let contents' = txtWrap (post ^. contents)
+
+                {- errors out with infinite-width/height widgets
+                border' = addScroll
+                          . viewport PostView Both 
+                          . padBottom Max
+                          . padRight  Max
+                -}
+                
+                border' = padBottom Max
+                          . padRight  Max
+                          
+            in border' contents'
+               <=> dimHorizontal
+          _ -> emptyWidget
+
         -- We need space to get the number/score label but we don't really
         -- want to indent the following by that much.
         --
         drawPost selected post
-            = border' postWidget <=>
-              dimHorizontal
+            = postWidget
             where
                 identifier = withAttrName (if selected then "selected" else "")
                   (hLimit 6 . padRight Max . txt $ postIdentifier post)
@@ -631,19 +656,7 @@ displayTopic time st order
                           $ txt (showTimeDelta time (post ^. opCreatedAt))
                 firstLine = userName'' <+> created
 
-                contents' = txtWrap (post ^. contents)
-
-                -- indent the contents based off the identifier block.
-                --
-                postWidget = identifier <+> (firstLine <=> contents')
-
-                -- could we change the text color or add an indicator to show that the
-                -- text has been cut off vertically? This would be neat but it's not
-                -- obvious how to do this.
-                --
-                border' = vLimit 8
-                          -- . padBottom Max
-                          . padRight  Max
+                postWidget = identifier <+> firstLine
 
 
 displayPost :: UTCTime -> SingleTopic -> TimeOrder -> [Widget ResourceName]
@@ -659,6 +672,11 @@ displayPost time st order = [showSelectedPost time order posts'']
       Decreasing -> case WL.listSelected allPosts of
         Just cPos -> WL.listMoveTo cPos posts'
         Nothing -> posts'
+
+
+addScroll :: Widget n -> Widget n
+addScroll = withHScrollBars OnBottom .
+            withVScrollBars OnRight
 
 
 showSelectedPost :: UTCTime -> TimeOrder -> WL.List ResourceName Post -> Widget ResourceName
@@ -678,9 +696,6 @@ showSelectedPost tNow order allPosts =
           contents' = viewport SinglePostView Both
                       (txt $ thisPost ^. contents)
                       -- (txtWrap $ thisPost ^. contents)
-
-          addScroll = withHScrollBars OnBottom .
-                      withVScrollBars OnRight
 
       in withAttrName "OP" topBar
          <=> padBottom Max (addScroll contents')
@@ -975,8 +990,8 @@ handleTuiEvent' (TuiState _ _ _ _ burl to (DS ds)) (VtyEvent (EvKey (KChar 'v') 
 
       getN st =
         let plist = st ^. stList
-        in case WL.listSelectedElement (orderSelect to plist) of
-             Just (_, post) -> post ^. postNumber
+        in case snd <$> WL.listSelectedElement (orderSelect to plist) of
+             Just post -> post ^. postNumber
              Nothing -> 1
 
   liftIO (showPage burl frag)
