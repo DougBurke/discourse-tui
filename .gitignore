@@ -3,3 +3,7 @@
 
 result
 dist-newstyle/
+
+# stack related
+.stack-work/
+stack*.yaml.lock
