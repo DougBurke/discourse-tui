@@ -1,0 +1,4 @@
+flags: {}
+packages:
+- '.'
+resolver: nightly-2024-12-18
