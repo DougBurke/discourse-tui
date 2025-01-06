@@ -21,29 +21,30 @@ import qualified Paths_discourse_tui as P
 import qualified Formatting as F
 import qualified Formatting.Time as FT
 
-import Brick (BrickEvent(..), App(..), EventM, Padding(..),
-              ViewportType(Both),
-              HScrollBarOrientation(OnBottom),
-              VScrollBarOrientation(OnRight),
-              Widget,
-              Direction(..),
-              nestEventM', attrName, get, put,
-              (<=>), (<+>),
-              attrMap, defaultMain,
-              fg,
-              hBox, hLimit,
-              neverShowCursor,
-              padBottom, padLeft, padRight, padTop,
-              txt, txtWrap,
-              viewport, viewportScroll,
-              vScrollBy, vScrollToBeginning, vScrollToEnd, vScrollPage,
-              hScrollBy,
-              emptyWidget,
-              withHScrollBars, withVScrollBars,
-              withAttr)
-import Brick.Main (halt)
+import Brick.AttrMap (attrMap, attrName)
+import Brick.Main (App(..), defaultMain, halt, neverShowCursor,
+                   vScrollBy, vScrollToBeginning, vScrollToEnd, vScrollPage,
+                   hScrollBy, viewportScroll)
+import Brick.Types (BrickEvent(..),
+                    Direction(..),
+                    EventM,
+                    ViewportType(Both),
+                    HScrollBarOrientation(OnBottom),
+                    VScrollBarOrientation(OnRight),
+                    Widget,
+                    get,
+                    put,
+                    nestEventM')
 import Brick.Widgets.Border (hBorder, hBorderAttr)
+import Brick.Widgets.Core (Padding(..), (<=>), (<+>),
+                           emptyWidget,
+                           hBox, hLimit,
+                           padBottom, padLeft, padRight, padTop,
+                           txt, txtWrap,
+                           viewport,
+                           withAttr, withHScrollBars, withVScrollBars)
 import Brick.Widgets.Center (hCenter)
+import Brick.Util (fg)
 
 import Control.Concurrent (forkIO, killThread)
 import Control.Concurrent.MVar (isEmptyMVar, newEmptyMVar, putMVar, tryTakeMVar)
