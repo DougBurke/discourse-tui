@@ -21,37 +21,39 @@ import qualified Paths_discourse_tui as P
 import qualified Formatting as F
 import qualified Formatting.Time as FT
 
-import Brick (BrickEvent(..), App(..), EventM, Padding(..),
-              ViewportType(Both),
-              HScrollBarOrientation(OnBottom),
-              VScrollBarOrientation(OnRight),
-              Widget,
-              Direction(..),
-              nestEventM', attrName, get, put,
-              (<=>), (<+>),
-              attrMap, defaultMain,
-              fg,
-              hBox, hLimit,
-              neverShowCursor,
-              padBottom, padLeft, padRight, padTop,
-              txt, txtWrap,
-              viewport, viewportScroll,
-              vScrollBy, vScrollToBeginning, vScrollToEnd, vScrollPage,
-              hScrollBy,
-              emptyWidget,
-              withHScrollBars, withVScrollBars,
-              withAttr)
-import Brick.Main (halt)
+import Brick.AttrMap (attrMap, attrName)
+import Brick.BChan (BChan, newBChan, writeBChan)
+import Brick.Main (App(..),
+                   customMain, halt, neverShowCursor,
+                   vScrollBy, vScrollToBeginning, vScrollToEnd, vScrollPage,
+                   hScrollBy, viewportScroll)
+import Brick.Types (BrickEvent(..),
+                    Direction(..),
+                    EventM,
+                    ViewportType(Both),
+                    HScrollBarOrientation(OnBottom),
+                    VScrollBarOrientation(OnRight),
+                    Widget,
+                    get,
+                    put,
+                    nestEventM')
 import Brick.Widgets.Border (hBorder, hBorderAttr)
+import Brick.Widgets.Core (Padding(..), (<=>), (<+>),
+                           emptyWidget,
+                           hBox, hLimit,
+                           padBottom, padLeft, padRight, padTop,
+                           txt, txtWrap,
+                           viewport,
+                           withAttr, withHScrollBars, withVScrollBars)
 import Brick.Widgets.Center (hCenter)
+import Brick.Util (fg)
 
 import Control.Concurrent (forkIO, killThread)
-import Control.Concurrent.MVar (isEmptyMVar, newEmptyMVar, putMVar, tryTakeMVar)
 import Control.Exception (IOException, catch, evaluate)
 import Control.Lens (Getting
                     , (&), (.~), (^.), _2
                     , view)
-import Control.Monad (unless, void, when)
+import Control.Monad (void, when)
 import Control.Monad.IO.Class (liftIO)
 
 import Data.Bifunctor (bimap)
@@ -59,8 +61,10 @@ import Data.List (intercalate, foldl')
 import Data.Time (UTCTime, diffUTCTime, getCurrentTime)
 import Data.Version (showVersion)
 
-import Graphics.Vty.Input.Events (Event(..), Key(..), Modifier(MShift))
 import Graphics.Vty.Attributes (blue, bold, defAttr, dim, green, reverseVideo, withStyle, cyan, yellow)
+import Graphics.Vty.Config (defaultConfig)
+import Graphics.Vty.Platform.Unix (mkVty)
+import Graphics.Vty.Input.Events (Event(..), Key(..), Modifier(MShift))
 
 import Network.HTTP.Simple (getResponseBody, httpJSON, parseRequest, setRequestQueryString)
 
@@ -210,14 +214,20 @@ parseArgs = do
 main :: IO ()
 main = do
     baseUrl <- parseArgs
-    initialState <- getTuiState baseUrl
-    void $ defaultMain tuiApp initialState
+    eventChan <- newBChan 10
+    let buildVty = mkVty defaultConfig
+    initialVty <- buildVty
+    initialState <- getTuiState baseUrl eventChan
+    void $ customMain initialVty buildVty (Just eventChan) tuiApp initialState
 
 
 -- initialize the TuiState with the list of topics and catagories
-getTuiState :: String -> IO TuiState
-getTuiState "" = die "The discourse URL is empty"
-getTuiState baseUrl = do
+getTuiState ::
+  String  -- URL
+  -> BChan DownloadEvent
+  -> IO TuiState
+getTuiState "" _ = die "The discourse URL is empty"
+getTuiState baseUrl bchan = do
   let baseUrl' = if last baseUrl == '/' then baseUrl else baseUrl <> "/"
 
   topicsRequest <- parseRequest (baseUrl' <> "latest.json")
@@ -227,7 +237,7 @@ getTuiState baseUrl = do
 
   now <- getCurrentTime
   let cat = makeCategoryMap categoriesResp
-  pure (processTopics baseUrl' now cat tps)
+  pure (processTopics baseUrl' now bchan cat tps)
 
 
 tokenize :: Getting M.Key a M.Key -> V.Vector a -> M.IntMap a
@@ -254,10 +264,11 @@ makeCategoryMap resp =
 processTopics ::
   String
   -> UTCTime
+  -> BChan DownloadEvent
   -> (M.IntMap Category, CategoryList)
   -> TopicResponse
   -> TuiState
-processTopics baseUrl now (catMap, cats) tps =
+processTopics baseUrl now bchan (catMap, cats) tps =
   let users = tps ^. tpUsers
       userMap = tokenize userId users
 
@@ -266,6 +277,7 @@ processTopics baseUrl now (catMap, cats) tps =
 
   in TuiState {
     _currentTime = now
+    , _channel = bchan
     , _topicList = topics
     , _categoryList = cats
     , _categoryMap = catMap
@@ -291,9 +303,10 @@ helpBar time (Just order) (Just ed) = withAttrName "bar" widget
     widget = txt helpBase <+> downloading <+> dirMsg
     dirMsg = padLeft Max $ txt (showOrder order)
     downloading = hCenter (txt ("downloading: " <>
-                                showInt (ed ^. edRunning) <>
+                                -- showInt (ed ^. ed) <>
+                                "x" <>
                                 "/" <>
-                                showInt (V.length (ed ^. edToDo)) <>
+                                showInt (ed ^. edNChunks) <>
                                 " (" <> showTimeDelta (ed ^. edTime) time <>
                                 ")"
                                )
@@ -357,30 +370,97 @@ getPosts tui tl = do
 
         nposts = V.length (pr ^. postIds)
 
-    mExtra <- getExtraPosts extraURL extraIds
+    mExtra <- getExtraPosts (tui ^. channel) extraURL extraIds
     pure $ toSingleTopic (pr ^. postResponseId) nposts (pr ^. postSlug) (pr ^. postTitle) (WL.list Posts basePosts 1) mExtra
 
 
-getExtraPosts :: String -> V.Vector Int -> IO (Maybe ExtraDownload)
-getExtraPosts _ ids | V.null ids = pure Nothing
-getExtraPosts baseUrl ids = do
-  let (now, later) = V.splitAt 20 ids
+-- This could be adaptive, but is it worth it?
+chunkSize :: Int
+-- chunkSize = 20
+chunkSize = 50
+-- chunkSize = 100
 
-      getChunk = do
-        let qry = map (\x -> ("post_ids[]", toN x)) (V.toList now)
+{-
+
+TODO: handle the server complaining about too many requests, a la
+
+discourse-tui: JSONParseException Request {
+  host                 = "discourse.nixos.org"
+  port                 = 443
+  secure               = True
+  requestHeaders       = [("Accept","application/json")]
+  path                 = "/t/3032/posts.json"
+  queryString          = "?post_ids%5B%5D=83696&post_ids%5B%5D=83726&post_ids%5B%5D=83745&post_ids%5B%5D=83755&post_ids%5B%5D=83763&post_ids%5B%5D=83882&post_ids%5B%5D=83905&post_ids%5B%5D=83911&post_ids%5B%5D=83923&post_ids%5B%5D=83928&post_ids%5B%5D=83947&post_ids%5B%5D=83978&post_ids%5B%5D=83990&post_ids%5B%5D=84014&post_ids%5B%5D=84046&post_ids%5B%5D=84065&post_ids%5B%5D=84070&post_ids%5B%5D=84080&post_ids%5B%5D=84099&post_ids%5B%5D=84143"
+  method               = "GET"
+  proxy                = Nothing
+  rawBody              = False
+  redirectCount        = 10
+  responseTimeout      = ResponseTimeoutDefault
+  requestVersion       = HTTP/1.1
+  proxySecureMode      = ProxySecureWithConnect
+}
+ (Response {responseStatus = Status {statusCode = 429, statusMessage = "Too Many Requests"}, responseVersion = HTTP/1.1, responseHeaders = [("Server","nginx"),("Date","Mon, 06 Jan 2025 17:09:04 GMT"),("Content-Type","text/plain; charset=UTF-8"),("Transfer-Encoding","chunked"),("Connection","keep-alive"),("Retry-After","1"),("Discourse-Rate-Limit-Error-Code","ip_10_secs_limit")], responseBody = (), responseCookieJar = CJ {expose = []}, responseClose' = ResponseClose, responseOriginalRequest = Request {
+  host                 = "discourse.nixos.org"
+  port                 = 443
+  secure               = True
+  requestHeaders       = [("Accept","application/json")]
+  path                 = "/t/3032/posts.json"
+  queryString          = "?post_ids%5B%5D=83696&post_ids%5B%5D=83726&post_ids%5B%5D=83745&post_ids%5B%5D=83755&post_ids%5B%5D=83763&post_ids%5B%5D=83882&post_ids%5B%5D=83905&post_ids%5B%5D=83911&post_ids%5B%5D=83923&post_ids%5B%5D=83928&post_ids%5B%5D=83947&post_ids%5B%5D=83978&post_ids%5B%5D=83990&post_ids%5B%5D=84014&post_ids%5B%5D=84046&post_ids%5B%5D=84065&post_ids%5B%5D=84070&post_ids%5B%5D=84080&post_ids%5B%5D=84099&post_ids%5B%5D=84143"
+  method               = "GET"
+  proxy                = Nothing
+  rawBody              = False
+  redirectCount        = 10
+  responseTimeout      = ResponseTimeoutDefault
+  requestVersion       = HTTP/1.1
+  proxySecureMode      = ProxySecureWithConnect
+}
+, responseEarlyHints = []}) (ParseError {errorContexts = [], errorMessage = "Failed reading: not a valid json value", errorPosition = 1:1 (0)})
+
+
+-}
+
+getExtraPosts ::
+  BChan DownloadEvent
+  -> String         -- URL to query
+  -> V.Vector Int   -- remaining ids to process
+  -> IO (Maybe ExtraDownload)
+getExtraPosts _ _ ids | V.null ids = pure Nothing
+getExtraPosts chan baseUrl ids = do
+  let idChunks = chunks chunkSize ids
+      nchunks = V.length idChunks
+
+      getChunk pIds = do
+        -- Is it really "post_ids[]=3,post_ids=[]4,..." ?
+        -- As far as I can tell it is.
+        let qry = map (\x -> ("post_ids[]", toN x)) (V.toList pIds)
             toN = Just . B.pack . show
         req <- parseRequest baseUrl
         let req' = setRequestQueryString qry req
         rsp <- getResponseBody <$> httpJSON req'
         pure (rsp ^. postSelList)
 
-  mvar <- newEmptyMVar
+      send ctr pIds = do
+        posts' <- getChunk pIds >>= mapM postToPandoc >>= evaluate
+        writeBChan chan (DL baseUrl nchunks ctr posts')
+
   stime <- getCurrentTime
   tid <- forkIO $ do
-    posts' <- getChunk >>= mapM postToPandoc >>= evaluate
-    putMVar mvar posts'
+    V.iforM_ idChunks send
+    writeBChan chan (DLOver baseUrl)
 
-  pure . Just $ toExtraDownload stime baseUrl (V.length now) later mvar tid
+  pure . Just $ toExtraDownload stime baseUrl nchunks tid
+
+
+{-
+Split the vector into chunks of a given size (the last chunk is likely
+to be smaller).
+
+This copies the data, which is a bit wasteful here.
+-}
+chunks :: Int -> V.Vector a -> V.Vector (V.Vector a)
+chunks s = V.unfoldr go
+  where go v | V.null v = Nothing
+             | otherwise = Just (V.splitAt s v)
 
 
 postToPandoc :: Post -> IO Post
@@ -411,13 +491,15 @@ getCategory tui = do
         postURL = mconcat [url, "c/", T.unpack slugVal, "/", show idVal, ".json"]
 
         url = tui ^. baseURL
-    
+
+        bchan = tui ^. channel
+
     -- We have the category map so shouldn't need to request the categories again.
     --
     topicsRequest <- parseRequest postURL
     tps <- getResponseBody <$> httpJSON topicsRequest
 
-    let ntps = processTopics url (tui ^. currentTime) (tui ^. categoryMap, tui ^. categoryList) tps ^. topicList
+    let ntps = processTopics url (tui ^. currentTime) bchan (tui ^. categoryMap, tui ^. categoryList) tps ^. topicList
         ndisplay = DisplayCategory slugVal idVal nameVal ntps
 
     pure ndisplay
@@ -443,7 +525,7 @@ orderSelect Decreasing xs =
     Nothing -> out
 
 
-tuiApp :: App TuiState e ResourceName
+tuiApp :: App TuiState DownloadEvent ResourceName
 tuiApp =
   let attrs = attrMap defAttr [ (attrName "title", withStyle defAttr bold)
                               , (attrName "pinned", fg green)
@@ -801,43 +883,6 @@ addToList olist xs =
   in WL.listReplace nelems osel olist
 
 
-
--- Do we have any downloading to process?
--- We need to kill any downloads if we are moving back to the topic list
---
--- It would be cleaner to just hold the TUI until the download has happened.
---
--- Does this work?
---
-
-downloadTuiEvent ::
-  UTCTime
-  -> TopicList
-  -> CategoryList
-  -> M.IntMap Category
-  -> String
-  -> TimeOrder
-  -> (SingleTopic -> Display)
-  -> SingleTopic
-  -> ExtraDownload
-  -> EventM m TuiState ()
-downloadTuiEvent ct tl cl cmap burl to dt st ed = do
-
-  -- Have we downloaded the data yet?
-  --
-  rsp <- liftIO (tryTakeMVar (ed ^. edQuery))
-  case rsp of
-    Nothing -> pure ()
-    Just nposts -> do
-
-      ned <- liftIO (getExtraPosts (ed ^. edBaseUrl) (ed ^. edToDo))
-
-      let nlist = addToList (st ^. stList) nposts
-          nst = st & stList .~ nlist & stDownload .~ ned
-
-      put (TuiState ct tl cl cmap burl to (DS (dt nst)))
-
-
 -- Enter the selected topic.
 --
 toTopic :: TuiState -> EventM ResourceName TuiState ()
@@ -853,9 +898,7 @@ fromTopic :: TuiState -> SingleTopic -> EventM ResourceName TuiState()
 fromTopic tui st = do
   case st ^. stDownload of
     Nothing -> pure ()
-    Just dl -> liftIO (do
-                          flag <- isEmptyMVar (dl ^. edQuery)
-                          unless flag (killThread (dl ^. edTID)))
+    Just dl -> liftIO (killThread (dl ^. edTID))  -- what happens if thread is already dead?
 
   put $ tui & displayState .~ DS DisplayAllTopics
 
@@ -917,37 +960,71 @@ isPost tui =
     _ -> False
 
 
-handleTuiEvent :: BrickEvent ResourceName e -> EventM ResourceName TuiState ()
+-- Select those displayState elements which contain a SingleTopic and
+-- return information letting us reconstruct the displayState.
+--
+-- This would be easier with names for fields, and hence lenses, for the
+-- constructors.
+--
+getDownloadState ::
+  DisplayState
+  -> Maybe (SingleTopic -> DisplayState, SingleTopic)
+getDownloadState ds =
+  let (tdisp, disp) = case ds of
+        DS d -> (DS, d)
+        DSHelp d -> (DSHelp, d)
+
+      mst = case disp of
+        DisplayTopic st -> Just (DisplayTopic, st)
+        DisplayPost st -> Just (DisplayPost, st)
+        DisplayCategoryTopic f1 f2 f3 f4 st -> Just (DisplayCategoryTopic f1 f2 f3 f4, st)
+        DisplayCategoryPost f1 f2 f3 f4 st -> Just (DisplayCategoryPost f1 f2 f3 f4, st)
+        _ -> Nothing
+
+   in mst >>= \(tdisplay, st) -> Just (tdisp . tdisplay, st)
+
+
+handleTuiEvent :: BrickEvent ResourceName DownloadEvent -> EventM ResourceName TuiState ()
 handleTuiEvent (VtyEvent (EvKey (KChar 'q') _)) = halt
 
-handleTuiEvent e = do
+-- Note that if on a help page we want to accept download events as long
+-- as they are for the page being viewed.
+--
+-- TODO: need to decide whether to accept the events or throw them away.
+--
+
+-- When a download event appears, append the posts to the list and continue.
+-- We do not try to identify when the download had been completed, as this
+-- is done by a different event (although we could handle it here).
+--
+handleTuiEvent (AppEvent (DL _ _ _ nposts)) = do
   tui <- get
+  let dst = tui ^. displayState
+  case getDownloadState dst of
+    Just (conv, st) -> let nlist = addToList (st ^. stList) nposts
+                           nst = st & stList .~ nlist
+                           ndst = conv nst
+                           ntui = tui & displayState .~ ndst
 
-  -- Are we still downloading?
-  --
-  let isDownloading (DisplayTopic st) = checkDownload DisplayTopic st
-      isDownloading (DisplayPost st) = checkDownload DisplayPost st
-      -- What to do about the category cases?
-      isDownloading (DisplayCategoryTopic a b c d st) = checkDownload (DisplayCategoryTopic a b c d) st
-      isDownloading (DisplayCategoryPost a b c d st) = checkDownload (DisplayCategoryPost a b c d) st
-      isDownloading _ = Nothing
+                       in liftIO (updateTime ntui) >>= put
 
-      checkDownload dt st = case st ^. stDownload of
-                              Just ed -> Just (dt, st, ed)
-                              Nothing -> Nothing
+    Nothing -> pure ()
 
-      -- This loses the event if we are downloading. Perhaps
-      -- we should process the event after the download? However,
-      -- there could be a lot of them, so it may make sense to
-      -- just drop them.
-      --
-      process d = case isDownloading d of
-                    Just (dt, st, ed) -> downloadTuiEvent (tui ^. currentTime) (tui ^. topicList) (tui ^. categoryList) (tui ^. categoryMap) (tui ^. baseURL) (tui ^. timeOrder) dt st ed
-                    Nothing -> handleTuiEvent' tui e
+-- Assume that the thread has been closed at this point so we don't need to kill it.
+--
+handleTuiEvent (AppEvent (DLOver _)) = do
+  tui <- get
+  let dst = tui ^. displayState
+  case getDownloadState dst of
+    Just (conv, st) -> let nst = st & stDownload .~ Nothing
+                           ndst = conv nst
+                           ntui = tui & displayState .~ ndst
 
-  case tui ^. displayState of
-    DS d -> process d
-    DSHelp d -> process d
+                       in liftIO (updateTime ntui) >>= put
+
+    Nothing -> pure ()
+
+handleTuiEvent e = get >>= \tui -> handleTuiEvent' tui e
 
 
 handleTuiEvent' :: TuiState -> BrickEvent ResourceName e -> EventM ResourceName TuiState ()
@@ -988,7 +1065,7 @@ handleTuiEvent' tui (VtyEvent (EvKey (KChar 's') _)) =
 --    category       -> /c/slug/it
 --
 --
-handleTuiEvent' (TuiState _ _ _ _ burl to (DS ds)) (VtyEvent (EvKey (KChar 'v') _)) = do
+handleTuiEvent' (TuiState _ _ _ _ _ burl to (DS ds)) (VtyEvent (EvKey (KChar 'v') _)) = do
 
   let frag = case ds of
                DisplayAllTopics -> "latest"
@@ -1109,29 +1186,29 @@ handleTuiEvent' tui (VtyEvent (EvKey KLeft _)) = do
 -- When can we view the categories? For the moment just in the all-display, but
 -- this could be anytime.
 --
-handleTuiEvent' (TuiState _ tl cl cmap burl to (DS DisplayAllTopics)) (VtyEvent (EvKey (KChar 'c') _)) = do
+handleTuiEvent' (TuiState _ bchan tl cl cmap burl to (DS DisplayAllTopics)) (VtyEvent (EvKey (KChar 'c') _)) = do
   nct <- liftIO getCurrentTime
-  put (TuiState nct tl cl cmap burl to (DS DisplayAllCategories))
+  put (TuiState nct bchan tl cl cmap burl to (DS DisplayAllCategories))
 
 
 -- Should we update the time in these cases? It would make the display
 -- "reactive", but it also might be confusing when scrolling to see
 -- the times change.
 --
-handleTuiEvent' tui@(TuiState _ tl _ _ _ _ (DS DisplayAllTopics)) ev
+handleTuiEvent' tui@(TuiState _ _ tl _ _ _ _ (DS DisplayAllTopics)) ev
     = scrollHandler (\x -> tui & topicList .~ x) tl ev
 
-handleTuiEvent' tui@(TuiState _ _ cats _ _ _ (DS DisplayAllCategories)) ev
+handleTuiEvent' tui@(TuiState _ _ _ cats _ _ _ (DS DisplayAllCategories)) ev
     = scrollHandler (\x -> tui & categoryList .~ x) cats ev
 
-handleTuiEvent' tui@(TuiState _ _ _ _ _ _ (DS (DisplayTopic st))) ev
+handleTuiEvent' tui@(TuiState _ _ _ _ _ _ _ (DS (DisplayTopic st))) ev
   = let list = st ^. stList
     in scrollHandler (\x -> tui & displayState .~ DS (DisplayTopic (st & stList .~ x))) list ev
 
-handleTuiEvent' tui@(TuiState _ _ _ _ _ _ (DS (DisplayCategory slug slugId name tl))) ev
+handleTuiEvent' tui@(TuiState _ _ _ _ _ _ _ (DS (DisplayCategory slug slugId name tl))) ev
   = scrollHandler (\x -> tui & displayState .~ DS (DisplayCategory slug slugId name x)) tl ev
 
-handleTuiEvent' tui@(TuiState _ _ _ _ _ _ (DS (DisplayCategoryTopic slug slugId name tl st))) ev
+handleTuiEvent' tui@(TuiState _ _ _ _ _ _ _ (DS (DisplayCategoryTopic slug slugId name tl st))) ev
   = let list = st ^. stList
     in scrollHandler (\x -> tui & displayState .~ DS (DisplayCategoryTopic slug slugId name tl (st & stList .~ x))) list ev
 

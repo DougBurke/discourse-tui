@@ -3,8 +3,10 @@
 {-# LANGUAGE TemplateHaskell #-}
 
 module Types (TuiState(..)
+             , DownloadEvent(..)
              , TopicList
              , CategoryList
+             , channel
              , currentTime
              , topicList
              , categoryList
@@ -72,9 +74,7 @@ module Types (TuiState(..)
              , toExtraDownload
              , edTime
              , edBaseUrl
-             , edRunning
-             , edToDo
-             , edQuery
+             , edNChunks
              , edTID
              , SingleTopic
              , toSingleTopic
@@ -96,6 +96,7 @@ import qualified Data.IntMap.Strict as M
 import qualified Data.Text as T
 import qualified Data.Vector as V
 
+import Brick.BChan (BChan)
 import Brick.Widgets.List (List)
 
 import Control.Concurrent (ThreadId)
@@ -381,21 +382,20 @@ data TimeOrder = Decreasing | Increasing
   deriving (Eq, Show)
 
 
+-- The base URL is just used to identify the query; we could drop the prefix but for
+-- now leave as is.
+--
 data ExtraDownload = ED
-  { _edTime :: UTCTime  -- time the query started, approximately
-  , _edBaseUrl :: String -- the URL to query (once the list of posts are attached)
-  , _edRunning :: Int   -- the number of posts being queried
-  , _edToDo :: V.Vector Int
-  , _edQuery :: MVar (V.Vector Post)
-  , _edTID :: ThreadId
+  { _edTime :: UTCTime    -- time the query started, approximately
+  , _edBaseUrl :: String  -- the URL to query (once the list of posts are attached)
+  , _edNChunks :: Int     -- the number of queries to run
+  , _edTID :: ThreadId    -- the thread running the download
   }
 
 toExtraDownload ::
   UTCTime
   -> String
   -> Int
-  -> V.Vector Int
-  -> MVar (V.Vector Post)
   -> ThreadId
   -> ExtraDownload
 toExtraDownload = ED
@@ -423,6 +423,29 @@ toSingleTopic = SingleTopic
 type TopicList = List ResourceName Topic
 type CategoryList = List ResourceName Category
 
+
+{-
+
+When a download has "extra" posts to return, a thread is created to
+get these events. As there may be multiple downloads needed we inject
+the just-downloaded events with the DownloadEvent type.  Note that
+there is minimal information in this event.
+
+The "DLOver" message is technically not needed, since we can identify
+this condition when _dlNChunks == _dlThisChunk, but leave as is for
+now as it separates the code slightly.
+
+-}
+
+data DownloadEvent =
+  DL { _dlBaseURL :: String
+     , _dlNChunks :: Int
+     , _dlThisChunk :: Int
+     , _dlEvents :: V.Vector Post  -- the extra downloads
+     }
+  | DLOver { _doneURL :: String }
+
+
 {-
 
 Originally there was a field defining what should be displayed, but I
@@ -435,6 +458,7 @@ incomplete-pattern matchig checks I knew were "impossible".
 data TuiState =
   TuiState
   { _currentTime :: UTCTime
+  , _channel :: BChan DownloadEvent
   , _topicList :: TopicList
   , _categoryList :: CategoryList
   , _categoryMap :: M.IntMap Category
