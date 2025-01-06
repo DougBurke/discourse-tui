@@ -2,7 +2,7 @@ cabal-version:       2.0
 
 name:                discourse-tui
 
-version:             0.6.0.0
+version:             0.7.0.0
 
 synopsis:            A terminal user interface for discourse
 
@@ -34,6 +34,7 @@ executable discourse-tui
                        aeson,
                        http-conduit,
                        vty,
+                       vty-unix == 0.2.*,
                        containers,
                        vector,
                        pandoc,
