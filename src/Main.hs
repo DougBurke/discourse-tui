@@ -122,12 +122,20 @@ helpMessage (Aliases aliases) =
       ] <> alines)
 
 
+-- Get the GHC version info.
+--
+getVersion :: String
+getVersion =
+  "version: " <> showVersion P.version <>
+  " (" <> SI.compilerName <> " " <>
+  showVersion SI.fullCompilerVersion <>
+  " " <> SI.os <> " " <> SI.arch <> ")"
+
+
 reportVersion :: IO ()
 reportVersion = do
   name <- getProgName
-  putStrLn (name <> ": v" <> showVersion P.version <> " (" <>
-           SI.compilerName <> " " <> showVersion SI.fullCompilerVersion <>
-           " " <> SI.os <> " " <> SI.arch <> ")")
+  putStrLn (name <> ": " <> getVersion)
   exitFailure
 
 
@@ -704,7 +712,12 @@ showSelectedPost tNow order allPosts =
     Nothing -> txt "something went wrong"
 
 
-displayHelp :: String -> TimeOrder -> TopicList -> Display -> [Widget ResourceName]
+displayHelp ::
+  String
+  -> TimeOrder
+  -> TopicList
+  -> Display
+  -> [Widget ResourceName]
 displayHelp url order topics prev =
   let header = "View the discourse for " <> T.pack url
 
@@ -716,6 +729,8 @@ displayHelp url order topics prev =
                                  , "Number of topics: " <> showInt (listLength topics)
                                  , "Number of posts:  " <> showInt (tpc ^. postsCount)
                                  , "Sort order:       " <> showOrder order
+                                 , ""
+                                 , T.pack getVersion
                                  ]
 
       help = "Right and left arrows move deeper into, or out of, topics.\n" <>
